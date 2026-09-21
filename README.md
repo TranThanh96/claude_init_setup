@@ -151,3 +151,8 @@ an initial `CLAUDE-activeContext.md`. Review the result before committing.
 - A new decision supersedes an old one; mark the old one superseded, don't delete it.
 - As the project grows and `CLAUDE.md` gets long, move per-module descriptions to
   `src/<module>/CLAUDE.md` instead of piling them into the root file.
+
+## Credit
+
+Inspired by [centminmod/my-claude-code-setup](https://github.com/centminmod/my-claude-code-setup),
+stripped down to the minimum file set and workflow described above.

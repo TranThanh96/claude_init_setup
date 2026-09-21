@@ -18,7 +18,34 @@ CLAUDE-troubleshooting.md          # known issues and fixes
 
 `patterns` and `troubleshooting` start empty and fill in as the project grows.
 
-## Install the `init_agent` command
+There are two ways to scaffold this template into a project: a plain shell
+command (`init_agent`) that works in any terminal, and a Claude Code slash
+command (`/init-agent`) that does the same thing but lets the agent handle the
+CLAUDE.md merge and fill in real content by reading the target codebase.
+
+## Option A: `/init-agent` slash command (recommended if you use Claude Code)
+
+```bash
+mkdir -p ~/.claude/commands
+curl -fsSL https://raw.githubusercontent.com/TranThanh96/claude_init_setup/main/init-agent.md \
+  -o ~/.claude/commands/init-agent.md
+```
+
+Then, inside any project, run:
+
+```
+/init-agent [target_dir]   # defaults to the current directory
+```
+
+It clones this repo, copies in whatever files are missing, and — if the target
+already has a `CLAUDE.md` — merges the `## Rules` / `## Memory Bank` / `##
+Memory Rules` sections into it without touching existing project-specific
+content. It then shows you the merged `CLAUDE.md` and asks you to check for
+duplicate or conflicting info, and offers to read the project's source to fill
+in any placeholders left in newly created files. See [`init-agent.md`](init-agent.md)
+for the exact instructions the agent follows.
+
+## Option B: `init_agent` shell script (no agent required)
 
 ```bash
 git clone https://github.com/TranThanh96/claude_init_setup.git ~/workspace/claude_init_setup
@@ -28,8 +55,6 @@ install -m 755 ~/workspace/claude_init_setup/init_agent.sh ~/.local/bin/init_age
 `init_agent` reads its template from `INIT_AGENT_TEMPLATE` (default:
 `/u01/thanhtm/workspace/claude_init_setup` — set the env var if you clone it
 elsewhere). Make sure `~/.local/bin` is on your `PATH`.
-
-## Scaffold into a project
 
 ```bash
 init_agent [target_dir]   # defaults to the current directory
@@ -41,11 +66,9 @@ Behavior:
 - **File already exists in target:** left untouched, never overwritten.
 - **`CLAUDE.md` already exists:** not overwritten. The template version is staged
   at `.claude/CLAUDE.md.template` instead, and `init_agent` prints a ready-to-use
-  prompt — hand it to your coding agent so it merges the `## Rules`, `## Memory
-  Bank`, and `## Memory Rules` sections into the existing `CLAUDE.md` without
-  touching the project-specific content already there, then deletes the staged
-  template file. Merging markdown sections needs context the script doesn't
-  have, so this step is left to the agent rather than done blindly by shell.
+  prompt — hand it to your coding agent so it merges the sections in (a plain
+  script can't safely merge markdown content, so that step is left to an agent
+  either way).
 
 After scaffolding a genuinely new project, ask your coding agent to read the
 codebase and fill in the `Overview` and `Commands` sections of `CLAUDE.md`, plus

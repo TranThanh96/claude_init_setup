@@ -53,8 +53,8 @@ install -m 755 ~/workspace/claude_init_setup/init_agent.sh ~/.local/bin/init_age
 ```
 
 `init_agent` reads its template from `INIT_AGENT_TEMPLATE` (default:
-`/u01/thanhtm/workspace/claude_init_setup` — set the env var if you clone it
-elsewhere). Make sure `~/.local/bin` is on your `PATH`.
+`~/workspace/claude_init_setup` — set the env var if you clone it elsewhere).
+Make sure `~/.local/bin` is on your `PATH`.
 
 ```bash
 init_agent [target_dir]   # defaults to the current directory

@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-TEMPLATE_DIR="${INIT_AGENT_TEMPLATE:-/u01/thanhtm/workspace/claude_init_setup}"
+TEMPLATE_DIR="${INIT_AGENT_TEMPLATE:-$HOME/workspace/claude_init_setup}"
 TARGET_DIR="${1:-.}"
 
 if [[ ! -f "$TEMPLATE_DIR/CLAUDE.md" ]]; then

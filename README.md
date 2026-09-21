@@ -1,7 +1,70 @@
 # claude_init_setup
 
-Minimal boilerplate for a CLAUDE.md-based memory bank, meant to be dropped into
-any project that uses a coding agent (Claude Code or similar).
+**A memory bank for your coding agent, in one command.**
+
+Every new session, a coding agent starts from zero: no idea what you decided
+last week, no idea which patterns you settled on, no idea what already broke
+and why. You end up re-explaining the same context over and over — or the
+agent "remembers" wrong and quietly reinvents a decision you already made.
+
+`claude_init_setup` fixes that with a tiny, git-committed memory bank:
+a `CLAUDE.md` the agent always reads, plus a handful of files it reads only
+when it matters (start of session, before a design call, while debugging).
+One command scaffolds it into a brand-new project — or merges it into a
+project that already has a `CLAUDE.md`, without touching what's already there.
+
+```
+/init-agent
+```
+
+That's the whole install for the common case. Read on for what it does and why.
+
+## Why this instead of a giant CLAUDE.md
+
+Most projects either have no persistent memory at all, or one CLAUDE.md file
+that keeps growing until nobody trusts it's still accurate. This repo splits
+memory by *when it should be read*, not by topic, so the agent's context stays
+small and the always-loaded file stays under 100 lines:
+
+| File | Read when | Loaded by default? |
+|---|---|---|
+| `CLAUDE.md` | Every session | Yes |
+| `.claude/rules/core-rules.md` | Every session | Yes (via `@import`) |
+| `.claude/rules/coding-guidelines.md` | Every session | Yes (via `@import`) |
+| `CLAUDE-activeContext.md` | Start of session | On request |
+| `CLAUDE-decisions.md` | Before a design/architecture decision | On request |
+| `CLAUDE-patterns.md` | Before implementing a new feature | On request |
+| `CLAUDE-troubleshooting.md` | While debugging | On request |
+
+`patterns` and `troubleshooting` start empty and fill in as the project grows.
+Decisions are never deleted, only superseded — so the history of *why* stays
+intact instead of getting silently overwritten.
+
+## Quick start
+
+**Already in Claude Code?** Install the slash command once:
+
+```bash
+mkdir -p ~/.claude/commands
+curl -fsSL https://raw.githubusercontent.com/TranThanh96/claude_init_setup/main/init-agent.md \
+  -o ~/.claude/commands/init-agent.md
+```
+
+Then, in any project:
+
+```
+/init-agent
+```
+
+It clones this repo, drops in whatever files are missing, and — if the
+project already has a `CLAUDE.md` — merges the Rules/Memory Bank sections into
+it without touching your existing Overview, Commands, or anything else you
+wrote. It shows you the merged result and asks you to sanity-check it, then
+offers to read your actual source and fill in any placeholders that are left.
+Nothing is overwritten silently, ever.
+
+**No agent, just a terminal?** Use the shell version instead — see
+[Option B](#option-b-init_agent-shell-script-no-agent-required) below.
 
 ## What's included
 
@@ -16,13 +79,6 @@ CLAUDE-troubleshooting.md          # known issues and fixes
 .claude/commands/update-memory-bank.md  # /update-memory-bank slash command
 ```
 
-`patterns` and `troubleshooting` start empty and fill in as the project grows.
-
-There are two ways to scaffold this template into a project: a plain shell
-command (`init_agent`) that works in any terminal, and a Claude Code slash
-command (`/init-agent`) that does the same thing but lets the agent handle the
-CLAUDE.md merge and fill in real content by reading the target codebase.
-
 ## Option A: `/init-agent` slash command (recommended if you use Claude Code)
 
 ```bash
@@ -31,19 +87,23 @@ curl -fsSL https://raw.githubusercontent.com/TranThanh96/claude_init_setup/main/
   -o ~/.claude/commands/init-agent.md
 ```
 
-Then, inside any project, run:
-
 ```
 /init-agent [target_dir]   # defaults to the current directory
 ```
 
-It clones this repo, copies in whatever files are missing, and — if the target
-already has a `CLAUDE.md` — merges the `## Rules` / `## Memory Bank` / `##
-Memory Rules` sections into it without touching existing project-specific
-content. It then shows you the merged `CLAUDE.md` and asks you to check for
-duplicate or conflicting info, and offers to read the project's source to fill
-in any placeholders left in newly created files. See [`init-agent.md`](init-agent.md)
-for the exact instructions the agent follows.
+What it does:
+
+- **File missing in target:** copied in as-is.
+- **File already exists in target:** left untouched — never overwritten.
+- **`CLAUDE.md` already exists:** the Rules / Memory Bank / Memory Rules
+  sections are merged in; every other section (Overview, Commands, anything
+  custom) is left exactly as-is. You're shown the result and asked to check
+  for duplicates or conflicts before moving on.
+- **Newly created files still have placeholders:** the agent offers to read
+  your actual source and propose real content — you approve before it writes
+  anything.
+
+See [`init-agent.md`](init-agent.md) for the exact instructions the agent follows.
 
 ## Option B: `init_agent` shell script (no agent required)
 
@@ -60,25 +120,20 @@ Make sure `~/.local/bin` is on your `PATH`.
 init_agent [target_dir]   # defaults to the current directory
 ```
 
-Behavior:
-
-- **New project / missing files:** copied as-is.
-- **File already exists in target:** left untouched, never overwritten.
-- **`CLAUDE.md` already exists:** not overwritten. The template version is staged
-  at `.claude/CLAUDE.md.template` instead, and `init_agent` prints a ready-to-use
-  prompt — hand it to your coding agent so it merges the sections in (a plain
-  script can't safely merge markdown content, so that step is left to an agent
-  either way).
+Same missing/existing-file rules as Option A. The one thing a plain script
+can't safely do is merge markdown content, so if `CLAUDE.md` already exists,
+it stages the template at `.claude/CLAUDE.md.template` and prints a
+ready-to-paste merge prompt for your agent instead of guessing.
 
 After scaffolding a genuinely new project, ask your coding agent to read the
 codebase and fill in the `Overview` and `Commands` sections of `CLAUDE.md`, plus
 an initial `CLAUDE-activeContext.md`. Review the result before committing.
 
-## Usage
+## Daily usage
 
 - **Start of session:** read `CLAUDE-activeContext.md` first (or let `CLAUDE.md`'s
   Memory Bank table remind the agent to).
-- **During work:** use `.claude/rules/core-rules.md` and `coding-guidelines.md` as
+- **During work:** `.claude/rules/core-rules.md` and `coding-guidelines.md` are
   the behavior contract — read relevant code before changing it, keep changes
   surgical, define verifiable success criteria before looping.
 - **Design decisions:** check `CLAUDE-decisions.md` first; add a new ADR when you

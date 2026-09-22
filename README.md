@@ -26,6 +26,7 @@ markdown the agent is *asked* to read, the important parts are **delivered by ho
 | Decisions (ADRs) | `.claude/memory/decisions/INDEX.md` + one file per ADR | `project-memory` skill, before design choices | Skill trigger |
 | Patterns, known issues | `.claude/memory/patterns.md`, `troubleshooting.md` | `project-memory` skill, when implementing / debugging | Skill trigger |
 | "Update memory before you forget" | — | **Stop hook**, once per session, only if code changed and memory didn't | Hook |
+| Memory drift since last update, per commit | — | **`git pre-commit` hook**, from git log, any tool, any developer | Hook |
 | Lint/type errors in edited files | `.claude/checks.json` | **PostToolUse hook** feeds failures back to Claude | Hook |
 | Secrets, force-push, hard reset | `.claude/settings.json` | `permissions.deny` | Client-enforced |
 | Memory stays small and consistent | `scripts/memory-lint.py` | Budgets, ADR index, orphaned task files | Lint / CI |
@@ -52,7 +53,12 @@ CLAUDE.md                               # always loaded: overview, commands, got
 .claude/skills/memory-audit/            # /memory-audit
 .claude/memory/                         # the memory bank itself (committed, reviewed like code)
 scripts/memory-lint.py                  # budgets + consistency checks (local, pre-commit, CI)
+scripts/pre_commit_memory_check.py      # git pre-commit hook: warns on memory drift, any tool/dev
 ```
+
+`init_agent.sh` also installs `scripts/pre_commit_memory_check.py` as `.git/hooks/pre-commit`
+(only if that file doesn't already exist — never overwritten; if it does, the installer prints the
+one line to add to it or to your hook manager instead).
 
 Hooks and the linter are Python 3 standard library only: no `jq`, no `pip install`.
 
@@ -89,12 +95,19 @@ detected and a migration prompt is printed; nothing is moved automatically.
   patterns, or known issues when the task calls for them.
 - **End of a task:** `/update-memory-bank` (the Stop hook will ask once if you forget). Review
   `git diff -- .claude/memory/` like any other change.
+- **Every commit:** the git `pre-commit` hook warns (never blocks) if code has drifted from the
+  last commit that touched `.claude/memory/` — by file count or by commit count, whichever crosses
+  its threshold first. Catches the case a single-commit check misses: several small commits that
+  each stay under the file threshold but add up to real drift. Fires for any commit, from any tool,
+  not just inside Claude Code — so it still catches a teammate who isn't using Claude Code at all.
 - **Task finished:** delete `tasks/<branch>.md` in the PR that lands it; durable knowledge has moved
   to ADRs / patterns / troubleshooting.
 - **Every ~2 weeks or after a model upgrade:** `/memory-audit`.
 - **CI (optional):** `python3 scripts/memory-lint.py --strict`.
 
-Tuning: `MEMORY_NUDGE_MIN_FILES` (default 3, `0` disables the Stop nudge).
+Tuning: `MEMORY_NUDGE_MIN_FILES` (default 3, `0` disables the Stop nudge and the file-count signal
+of the pre-commit warning) and `MEMORY_NUDGE_MIN_COMMITS` (default 5, `0` disables the commit-count
+signal). Both `0` disables the pre-commit warning entirely.
 
 **pre-commit (optional)** — add to the project's `.pre-commit-config.yaml`:
 

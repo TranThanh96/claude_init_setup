@@ -50,6 +50,7 @@ FILES=(
   ".claude/memory/decisions/ADR-000-template.md"
   ".claude/memory/tasks/_TEMPLATE.md"
   "scripts/memory-lint.py"
+  "scripts/pre_commit_memory_check.py"
 )
 MERGE_FILES=("CLAUDE.md" ".claude/settings.json")
 
@@ -76,7 +77,27 @@ for file in "${FILES[@]}"; do
   created+=("$file")
 done
 
-chmod +x "$TARGET_DIR"/.claude/hooks/*.py "$TARGET_DIR/scripts/memory-lint.py" 2>/dev/null || true
+chmod +x "$TARGET_DIR"/.claude/hooks/*.py "$TARGET_DIR/scripts"/*.py 2>/dev/null || true
+
+# Real git hook (not a Claude Code hook): fires for any commit, from any tool,
+# by any developer -- not just inside a Claude Code session. Never overwritten.
+precommit_msg=""
+if [[ -d "$TARGET_DIR/.git" ]]; then
+  hook_dst="$TARGET_DIR/.git/hooks/pre-commit"
+  if [[ -e "$hook_dst" ]]; then
+    precommit_msg="$TARGET_DIR/.git/hooks/pre-commit already exists; not touching it. To get the
+memory-drift warning, add this line to it (or your hook manager):
+  python3 \"\$(git rev-parse --show-toplevel)/scripts/pre_commit_memory_check.py\""
+  else
+    mkdir -p "$(dirname "$hook_dst")"
+    cat > "$hook_dst" <<'HOOK'
+#!/bin/sh
+exec python3 "$(git rev-parse --show-toplevel)/scripts/pre_commit_memory_check.py"
+HOOK
+    chmod +x "$hook_dst"
+    precommit_msg="installed: .git/hooks/pre-commit (warns before commit if memory looks stale)"
+  fi
+fi
 
 echo "== init_agent (v2): $TARGET_DIR =="
 echo "created:"
@@ -123,6 +144,11 @@ Migrate the v1 memory bank into .claude/memory/ (read .claude/rules/memory-files
 - Show me the diff. Only after I approve, git rm the old CLAUDE-*.md files.
 ---
 EOF
+fi
+
+if [[ -n "$precommit_msg" ]]; then
+  echo
+  echo "$precommit_msg"
 fi
 
 echo

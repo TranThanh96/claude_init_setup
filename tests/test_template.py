@@ -109,6 +109,21 @@ class TestInstaller(TemplateTestCase):
         self.assertTrue((self.p.root / "CLAUDE.md.template").is_file())
         self.assertTrue((self.p.root / ".claude/settings.json.template").is_file())
 
+    def test_installs_git_pre_commit_hook_when_absent(self):
+        hook = self.p.root / ".git/hooks/pre-commit"
+        self.assertTrue(hook.is_file())
+        self.assertTrue(os.access(hook, os.X_OK))
+        self.assertIn("pre_commit_memory_check.py", hook.read_text())
+
+    def test_does_not_overwrite_existing_git_pre_commit_hook(self):
+        hook = self.p.root / ".git/hooks/pre-commit"
+        hook.write_text("#!/bin/sh\necho mine\n")
+        res = subprocess.run(["bash", str(TEMPLATE / "init_agent.sh"), str(self.p.root)],
+                             env=self.p.env, capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(hook.read_text(), "#!/bin/sh\necho mine\n")
+        self.assertIn(".git/hooks/pre-commit already exists", res.stdout)
+
     def test_v1_layout_is_detected(self):
         self.p.write("CLAUDE-activeContext.md", "# old\n")
         res = subprocess.run(["bash", str(TEMPLATE / "init_agent.sh"), str(self.p.root)],
@@ -256,6 +271,65 @@ class TestPostEditCheck(TemplateTestCase):
         res = self.edit(".claude/memory/decisions/ADR-001-x.md")
         self.assertEqual(res.returncode, 2)
         self.assertIn("not listed in decisions/INDEX.md", res.stderr)
+
+
+class TestPreCommitCheck(TemplateTestCase):
+    def check(self, extra_env: dict | None = None) -> subprocess.CompletedProcess:
+        env = {**self.p.env, **(extra_env or {})}
+        return subprocess.run(
+            ["python3", "scripts/pre_commit_memory_check.py"],
+            cwd=self.p.root, env=env, capture_output=True, text=True,
+        )
+
+    def touch_and_stage(self, n: int, start: int = 0) -> None:
+        for i in range(start, start + n):
+            self.p.write(f"src/f{i}.py", f"x = {i}\n")
+        self.p.git("add", "-A")
+
+    def test_below_both_thresholds_is_silent(self):
+        self.touch_and_stage(2)
+        res = self.check()
+        self.assertEqual((res.returncode, res.stderr), (0, ""))
+
+    def test_warns_when_file_threshold_reached_in_one_commit(self):
+        self.touch_and_stage(3)
+        res = self.check()
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("3 file(s) changed across 0 commit(s)", res.stderr)
+
+    def test_warns_from_many_small_commits_even_under_file_threshold(self):
+        # Five separate 1-file commits: each is below MEMORY_NUDGE_MIN_FILES (3),
+        # but the commit count crosses MEMORY_NUDGE_MIN_COMMITS (5) -- this is the
+        # drift the per-commit-only check would miss.
+        for i in range(5):
+            self.touch_and_stage(1, start=i)
+            self.p.commit(f"small {i}")
+        self.touch_and_stage(1, start=5)
+        res = self.check()
+        self.assertIn("5 commit(s)", res.stderr)
+
+    def test_staged_memory_change_suppresses_warning(self):
+        self.touch_and_stage(5)
+        self.p.write(".claude/memory/patterns.md", "# Patterns\n- x\n")
+        self.p.git("add", "-A")
+        res = self.check()
+        self.assertEqual((res.returncode, res.stderr), (0, ""))
+
+    def test_can_be_disabled(self):
+        self.touch_and_stage(10)
+        res = self.check({"MEMORY_NUDGE_MIN_FILES": "0", "MEMORY_NUDGE_MIN_COMMITS": "0"})
+        self.assertEqual((res.returncode, res.stderr), (0, ""))
+
+    def test_silent_in_uninitialised_project(self):
+        shutil.rmtree(self.p.root / ".claude" / "memory")
+        self.p.git("add", "-A")
+        self.touch_and_stage(5)
+        res = self.check()
+        self.assertEqual((res.returncode, res.stderr), (0, ""))
+
+    def test_never_exits_nonzero(self):
+        self.touch_and_stage(50)
+        self.assertEqual(self.check().returncode, 0)
 
 
 class TestMemoryLint(TemplateTestCase):

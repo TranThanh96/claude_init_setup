@@ -3,7 +3,7 @@
 ## Overview
 - Goal: <1-2 sentences>
 - Stack: <language/runtime, framework, database, ...>
-init- Architecture: <3-5 lines: main modules and data flow>
+- init- Architecture: <3-5 lines: main modules and data flow>
 
 ## Commands
 - Install: `...`

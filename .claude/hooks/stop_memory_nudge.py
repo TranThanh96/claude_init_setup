@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -33,6 +34,12 @@ def git_lines(root: Path, *args: str) -> list[str]:
     return [l for l in out.stdout.splitlines() if l.strip()] if out.returncode == 0 else []
 
 
+def marker_path(session_id: str) -> Path:
+    """Per-session state file shared by the SessionStart, Stop and SessionEnd hooks."""
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", session_id)[:128]
+    return Path(tempfile.gettempdir()) / f"claude-memory-{safe}.json"
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -46,7 +53,7 @@ def main() -> int:
     session_id = payload.get("session_id")
     if not session_id:
         return 0
-    marker = Path(tempfile.gettempdir()) / f"claude-memory-{session_id}.json"
+    marker = marker_path(session_id)
     try:
         state = json.loads(marker.read_text())
     except (OSError, json.JSONDecodeError):

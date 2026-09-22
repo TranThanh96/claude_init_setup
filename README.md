@@ -46,6 +46,7 @@ CLAUDE.md                               # always loaded: overview, commands, got
 .claude/hooks/session_start.py          # injects project-state + tasks/<branch>.md, with staleness
 .claude/hooks/stop_memory_nudge.py      # one-time nudge to update memory
 .claude/hooks/post_edit_check.py        # runs checks.json on each edited file
+.claude/hooks/session_end.py            # removes the per-session temp marker
 .claude/skills/project-memory/          # auto-triggered: ADRs / patterns / troubleshooting lookup
 .claude/skills/update-memory-bank/      # /update-memory-bank
 .claude/skills/memory-audit/            # /memory-audit
@@ -94,6 +95,37 @@ detected and a migration prompt is printed; nothing is moved automatically.
 - **CI (optional):** `python3 scripts/memory-lint.py --strict`.
 
 Tuning: `MEMORY_NUDGE_MIN_FILES` (default 3, `0` disables the Stop nudge).
+
+**pre-commit (optional)** — add to the project's `.pre-commit-config.yaml`:
+
+```yaml
+- repo: local
+  hooks:
+    - id: memory-lint
+      name: memory-lint
+      entry: python3 scripts/memory-lint.py
+      language: system
+      pass_filenames: false
+      files: ^(CLAUDE\.md|\.claude/)
+```
+
+## Verify in a real session
+
+After installing, open Claude Code in the project and check:
+
+- `/hooks` lists SessionStart, PostToolUse, Stop and SessionEnd from *Project Settings*.
+- `/context` shows each `.claude/rules/*.md` file once (not twice) under Memory files.
+- `/permissions` shows the `deny` rules from `.claude/settings.json`.
+- The first reply of a new session on a branch with a task file knows where the task stopped.
+
+## Developing this template
+
+```
+python3 -m unittest discover -s tests -v   # 30 end-to-end tests, stdlib only
+python3 scripts/memory-lint.py
+```
+
+CI runs both on Linux and macOS (bash 3.2) with Python 3.9 and 3.12.
 
 ## Memory rules
 

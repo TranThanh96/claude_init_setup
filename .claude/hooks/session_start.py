@@ -65,6 +65,12 @@ def staleness(root: Path, text: str) -> str:
     return f"It was written at commit {sha}; {count} commit(s) have landed since then."
 
 
+def marker_path(session_id: str) -> Path:
+    """Per-session state file shared by the SessionStart, Stop and SessionEnd hooks."""
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", session_id)[:128]
+    return Path(tempfile.gettempdir()) / f"claude-memory-{safe}.json"
+
+
 def task_filename(branch: str) -> str:
     return branch.replace("/", "__") + ".md"
 
@@ -83,14 +89,17 @@ def main() -> int:
     branch = git(root, "rev-parse", "--abbrev-ref", "HEAD")
     head = git(root, "rev-parse", "--short", "HEAD")
 
-    # Record HEAD at session start for the Stop hook.
+    # Record HEAD at the first start of this session for the Stop hook. Never
+    # overwrite an existing marker: on resume / clear / compact that would reset
+    # the "already nudged" flag and the session's starting point.
     session_id = payload.get("session_id")
-    if session_id and head and payload.get("source") in (None, "startup", "resume", "clear"):
-        marker = Path(tempfile.gettempdir()) / f"claude-memory-{session_id}.json"
-        try:
-            marker.write_text(json.dumps({"start_head": head}))
-        except OSError:
-            pass
+    if session_id and head:
+        marker = marker_path(session_id)
+        if not marker.exists():
+            try:
+                marker.write_text(json.dumps({"start_head": head}))
+            except OSError:
+                pass
 
     parts: list[str] = ["Project memory for this repository (from .claude/memory/):"]
 

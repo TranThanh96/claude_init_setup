@@ -1,3 +1,6 @@
+<!-- Source: forrestchang/andrej-karpathy-skills (MIT). Loaded every session.
+     Review this file after each major model release: newer models may not need
+     every guardrail, and each line costs context in every session. -->
 # Coding Guidelines
 
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.

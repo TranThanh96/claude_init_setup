@@ -1,32 +1,43 @@
-# <Project Name>
+<!--
+  Always loaded, every session. Budget: <= 100 lines (checked by scripts/memory-lint.py).
+  HTML comments like this one are stripped before Claude sees the file: use them
+  for notes to human maintainers, they cost zero context.
+  Put here only what Claude cannot infer from the code or git log.
+-->
 
 ## Overview
-- Goal: <1-2 sentences>
-- Stack: <language/runtime, framework, database, ...>
-- init- Architecture: <3-5 lines: main modules and data flow>
+<!-- 1-2 sentences: what this project is for and who uses it. -->
+- Goal: <...>
+- Stack: <language/runtime, framework, database>
+<!-- Architecture: 3-5 lines on main modules and data flow. Delete if the
+     directory structure already makes it obvious. -->
+- Architecture: <...>
 
 ## Commands
+<!-- Exact commands. In a monorepo, put per-module commands in <module>/CLAUDE.md. -->
 - Install: `...`
-- Test: `...`
+- Test (all): `...`
+- Test (one file): `...`
 - Lint/format: `...`
 - Run local: `...`
 
-## Rules
-@.claude/rules/core-rules.md
-@.claude/rules/coding-guidelines.md
+## Gotchas
+<!-- Highest-value section. Traps a new engineer would fall into:
+     invariants, generated files, public APIs that must not change,
+     things that look wrong but are intentional. One line each. -->
+- <...>
 
-## Memory Bank
-The files below are NOT auto-loaded. Read them at the right time:
+## Project memory
+Committed project memory lives in `.claude/memory/`:
 
-| File | Read when |
-|---|---|
-| CLAUDE-activeContext.md | At the start of every session |
-| CLAUDE-decisions.md | Before making a design/architecture decision |
-| CLAUDE-patterns.md | Before implementing a new feature |
-| CLAUDE-troubleshooting.md | While debugging an issue |
+| File | Loaded |
+| --- | --- |
+| `project-state.md` | Injected at session start by a hook |
+| `tasks/<branch>.md` | Injected at session start for the current branch |
+| `decisions/INDEX.md` → `ADR-NNN-*.md` | On demand, via the `project-memory` skill |
+| `troubleshooting.md`, `patterns.md` | On demand, via the `project-memory` skill |
 
-## Memory Rules
-- Only record what CANNOT be inferred from the code or git log.
-- activeContext is a snapshot: overwrite it, don't append a log.
-- A new decision supersedes an old one: mark the old one as superseded, don't delete it.
-- Update the memory bank after every major task (use /update-memory-bank).
+- `.claude/memory/` holds shared project knowledge (reviewed like code).
+  Claude's auto memory holds personal preferences only; project facts do not go there.
+- Run `/update-memory-bank` at the end of a task; `/memory-audit` every ~2 weeks.
+- When compacting, preserve: the list of modified files, test commands run and their results, and the current task file path.

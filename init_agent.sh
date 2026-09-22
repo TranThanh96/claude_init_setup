@@ -39,6 +39,7 @@ FILES=(
   ".claude/hooks/session_start.py"
   ".claude/hooks/stop_memory_nudge.py"
   ".claude/hooks/post_edit_check.py"
+  ".claude/hooks/session_end.py"
   ".claude/skills/project-memory/SKILL.md"
   ".claude/skills/update-memory-bank/SKILL.md"
   ".claude/skills/memory-audit/SKILL.md"

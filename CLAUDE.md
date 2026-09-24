@@ -28,16 +28,16 @@
 - <...>
 
 ## Project memory
-Committed project memory lives in `.claude/memory/`:
+`.claude/memory/` holds what the code and git log can't tell you. Read a file when its row applies:
 
-| File | Loaded |
+| File | Read when |
 | --- | --- |
-| `project-state.md` | Injected at session start by a hook |
-| `tasks/<branch>.md` | Injected at session start for the current branch |
-| `decisions/INDEX.md` → `ADR-NNN-*.md` | On demand, via the `project-memory` skill |
-| `troubleshooting.md`, `patterns.md` | On demand, via the `project-memory` skill |
+| `active.md` (local, gitignored) | Injected at session start. A subagent without it in context: read it if the current task is unclear |
+| `decisions.md` | Before a design choice, a public-interface change or a new dependency |
+| `patterns.md` | Before implementing a feature, module or test |
+| `troubleshooting.md` | When a bug or failure has no obvious cause |
 
-- `.claude/memory/` holds shared project knowledge (reviewed like code).
-  Claude's auto memory holds personal preferences only; project facts do not go there.
-- Run `/update-memory-bank` at the end of a task; `/memory-audit` every ~2 weeks.
-- When compacting, preserve: the list of modified files, test commands run and their results, and the current task file path.
+- An `active` decision is a constraint: if a change contradicts one, stop and tell the user which one and why.
+- Memory can be stale: when it disagrees with the code, trust the code and point out the stale entry.
+- Project facts go here, not in Claude's auto memory (which holds personal preferences only).
+- When compacting, preserve: the list of modified files and the test commands run with their results.

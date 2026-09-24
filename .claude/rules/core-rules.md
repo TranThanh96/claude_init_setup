@@ -8,4 +8,3 @@
 - Large changes (>3 files or any public interface change): present a plan first and wait for approval.
 - Don't add a new dependency without asking first.
 - Prefer the minimal fix; don't refactor outside the task's scope.
-- Before a design/architecture choice, check existing ADRs (project-memory skill).

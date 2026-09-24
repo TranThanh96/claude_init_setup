@@ -3,37 +3,48 @@
 **A memory bank for your coding agent — loaded by hooks, enforced by lint, in one command.**
 
 Every new session, a coding agent starts from zero: no idea what you decided last week, which
-patterns you settled on, what already broke and why, or where the task on this branch stopped.
+patterns you settled on, what already broke and why, or where the current task stopped.
 You re-explain, or the agent "remembers" wrong and quietly reinvents a decision you already made.
 
-`claude_init_setup` fixes that with a small, git-committed memory bank — and, unlike a pile of
-markdown the agent is *asked* to read, the important parts are **delivered by hooks** and
-**checked by a linter**, so they don't depend on the agent remembering instructions.
+`claude_init_setup` fixes that with four small memory files. Like
+[centminmod/my-claude-code-setup](https://github.com/centminmod/my-claude-code-setup), it keeps
+them flat and lets `CLAUDE.md` say which one to read when. Unlike a pile of markdown the agent is
+only *asked* to read, the work-in-progress snapshot is **delivered by a hook** and the files are
+**checked by a linter**, so continuity doesn't depend on the agent remembering instructions.
 
 ```
 /init-agent
 ```
 
-## Design: split memory by *when* it's needed, and by *who guarantees it*
+## Design: four files, one hook
 
-| What | Where | How it reaches Claude | Guarantee |
-| --- | --- | --- | --- |
-| Project overview, commands, gotchas | `CLAUDE.md` (≤100 lines) | Loaded every session | Built-in |
-| Behaviour rules | `.claude/rules/*.md` | Loaded every session (no `@import` needed) | Built-in |
-| Rules for editing memory | `.claude/rules/memory-files.md` | Only when a memory file is read (`paths:`) | Built-in |
-| Project snapshot | `.claude/memory/project-state.md` | **SessionStart hook**, also after `/compact` | Hook |
-| This branch's task state | `.claude/memory/tasks/<branch>.md` | **SessionStart hook**, with "N commits since written" | Hook |
-| Decisions (ADRs) | `.claude/memory/decisions/INDEX.md` + one file per ADR | `project-memory` skill, before design choices | Skill trigger |
-| Patterns, known issues | `.claude/memory/patterns.md`, `troubleshooting.md` | `project-memory` skill, when implementing / debugging | Skill trigger |
-| "Update memory before you forget" | — | **Stop hook**, once per session, only if code changed and memory didn't | Hook |
-| Memory drift since last update, per commit | — | **`git pre-commit` hook**, from git log, any tool, any developer | Hook |
-| Lint/type errors in edited files | `.claude/checks.json` | **PostToolUse hook** feeds failures back to Claude | Hook |
-| Secrets, force-push, hard reset | `.claude/settings.json` | `permissions.deny` | Client-enforced |
-| Memory stays small and consistent | `scripts/memory-lint.py` | Budgets, ADR index, orphaned task files | Lint / CI |
+| What | Where | How it reaches the agent |
+| --- | --- | --- |
+| Overview, commands, gotchas, memory map | `CLAUDE.md` (≤100 lines) | Loaded every session, subagents included |
+| Behaviour rules | `.claude/rules/*.md` | Loaded every session (no `@import` needed) |
+| Rules for editing memory | `.claude/rules/memory-files.md` | Only when a memory file is read (`paths:`) |
+| Work in progress | `.claude/memory/active.md` — **local, gitignored** | **SessionStart hook** (startup, resume, `/clear`, after compaction), with its age and the uncommitted-file count |
+| Decisions | `.claude/memory/decisions.md` | Read on demand: "before a design choice" row in `CLAUDE.md` |
+| Patterns | `.claude/memory/patterns.md` | Read on demand: "before implementing" |
+| Known issues | `.claude/memory/troubleshooting.md` | Read on demand: "when debugging" |
+| Memory drift, over-budget files | `scripts/pre_commit_memory_check.py` | **git pre-commit hook**: warns, from any tool, any developer |
+| Lint/type errors in edited files | `.claude/checks.json` | **PostToolUse hook** feeds failures back to Claude |
+| Secrets, force-push, hard reset | `.claude/settings.json` | `permissions.deny` |
+| Memory stays small | `scripts/memory-lint.py` | Budgets, `active.md` gitignored (local / pre-commit / CI) |
 
-Why per-branch task files: a single "active context" file breaks as soon as you use more than one
-branch, worktree, or agent at a time — sessions overwrite each other's snapshot. Project state and
-task state also have different lifetimes, so they live in different files.
+Why `active.md` is gitignored: it is a snapshot of *this checkout's* work, not project knowledge.
+Uncommitted, each worktree has its own, so parallel sessions in separate worktrees never overwrite
+each other, and there's nothing to merge, conflict on, or delete in a PR. Anything worth keeping
+moves to the three committed files.
+
+The flip side: `active.md` doesn't follow you to another machine, and anything that deletes
+ignored files deletes it too — `git clean -fdx` (use `-fd` to keep ignored files), or removing
+the worktree it lives in. Before either, move anything worth keeping into the committed files,
+or copy `active.md` somewhere safe.
+
+Why the memory map lives in `CLAUDE.md`: every agent loads it, including subagents and sessions
+that never trigger a skill. A subagent doesn't get the SessionStart snapshot, so the map tells it
+to read `active.md` if the task is unclear.
 
 ## What's included
 
@@ -43,18 +54,17 @@ CLAUDE.md                               # always loaded: overview, commands, got
 .claude/checks.example.json             # per-glob fast checks for the PostToolUse hook
 .claude/rules/core-rules.md             # always loaded
 .claude/rules/coding-guidelines.md      # always loaded (karpathy-guidelines, MIT)
-.claude/rules/memory-files.md           # path-scoped: only when touching .claude/memory/
-.claude/hooks/session_start.py          # injects project-state + tasks/<branch>.md, with staleness
-.claude/hooks/stop_memory_nudge.py      # one-time nudge to update memory
+.claude/rules/memory-files.md           # path-scoped: the one source of memory-editing rules
+.claude/hooks/session_start.py          # injects active.md, its age, uncommitted-file count
 .claude/hooks/post_edit_check.py        # runs checks.json on each edited file
-.claude/hooks/session_end.py            # removes the per-session temp marker
-.claude/skills/project-memory/          # auto-triggered: ADRs / patterns / troubleshooting lookup
-.claude/skills/update-memory-bank/      # /update-memory-bank
+.claude/skills/update-memory-bank/      # /update-memory-bank (Claude may also run it at milestones)
 .claude/skills/memory-audit/            # /memory-audit
-.claude/memory/                         # the memory bank itself (committed, reviewed like code)
+.claude/memory/                         # decisions.md, patterns.md, troubleshooting.md (+ local active.md)
 scripts/memory-lint.py                  # budgets + consistency checks (local, pre-commit, CI)
 scripts/pre_commit_memory_check.py      # git pre-commit hook: warns on memory drift, any tool/dev
 ```
+
+The installer also adds `.claude/memory/active.md` to the project's `.gitignore`.
 
 `init_agent.sh` also installs `scripts/pre_commit_memory_check.py` as `.git/hooks/pre-commit`
 (only if that file doesn't already exist — never overwritten; if it does, the installer prints the
@@ -84,30 +94,33 @@ init_agent [target_dir]
 ```
 
 Both never overwrite existing files. An existing `CLAUDE.md` or `.claude/settings.json` gets a
-`.template` staged next to it plus a merge prompt. A v1 layout (`CLAUDE-*.md` in the root) is
-detected and a migration prompt is printed; nothing is moved automatically.
+`.template` staged next to it plus a merge prompt. An older layout — v1 (`CLAUDE-*.md` in the root)
+or v2 (`.claude/memory/tasks/`, `project-state.md`, `decisions/`) — is detected and a migration
+prompt is printed; nothing is moved automatically.
 
 ## Daily usage
 
-- **Start of session:** nothing to do. The hook injects project state and this branch's task file,
-  and tells Claude how many commits have landed since each was written.
-- **During work:** edits are checked by `checks.json`; the `project-memory` skill pulls in ADRs,
-  patterns, or known issues when the task calls for them.
-- **End of a task:** `/update-memory-bank` (the Stop hook will ask once if you forget). Review
+- **Start of session:** nothing to do. The hook injects `active.md`, when it was written, how many
+  commits landed since, and how many files are uncommitted.
+- **During work:** edits are checked by `checks.json`; the memory map in `CLAUDE.md` points the
+  agent at decisions, patterns, or known issues when the task calls for them.
+- **Milestone or end of session:** `/update-memory-bank` (or ask Claude to "update memory").
+  It overwrites `active.md` and records any new decision, pattern, or tricky fix. Review
   `git diff -- .claude/memory/` like any other change.
-- **Every commit:** the git `pre-commit` hook warns (never blocks) if code has drifted from the
-  last commit that touched `.claude/memory/` — by file count or by commit count, whichever crosses
-  its threshold first. Catches the case a single-commit check misses: several small commits that
-  each stay under the file threshold but add up to real drift. Fires for any commit, from any tool,
-  not just inside Claude Code — so it still catches a teammate who isn't using Claude Code at all.
-- **Task finished:** delete `tasks/<branch>.md` in the PR that lands it; durable knowledge has moved
-  to ADRs / patterns / troubleshooting.
+- **Every commit:** the git `pre-commit` hook warns (never blocks) if a memory file is over its
+  budget, or if code has drifted from the last commit that touched `.claude/memory/`, by file
+  count or by commit count.
+- **Project grows:** a pattern or decision for one module goes in a path-scoped
+  `.claude/rules/<module>.md`, so it loads only when that module is touched; the shared memory
+  files keep only what applies project-wide. A replaced decision shrinks to one line or is deleted
+  (git history keeps it).
+- **Task finished:** `/update-memory-bank` moves what's durable into the committed files and
+  deletes `active.md`.
 - **Every ~2 weeks or after a model upgrade:** `/memory-audit`.
 - **CI (optional):** `python3 scripts/memory-lint.py --strict`.
 
-Tuning: `MEMORY_NUDGE_MIN_FILES` (default 3, `0` disables the Stop nudge and the file-count signal
-of the pre-commit warning) and `MEMORY_NUDGE_MIN_COMMITS` (default 5, `0` disables the commit-count
-signal). Both `0` disables the pre-commit warning entirely.
+Tuning the pre-commit warning: `MEMORY_NUDGE_MIN_FILES` (default 3) and `MEMORY_NUDGE_MIN_COMMITS`
+(default 5); `0` disables that signal, both `0` disables the drift warning (budget warnings stay).
 
 **pre-commit (optional)** — add to the project's `.pre-commit-config.yaml`:
 
@@ -126,15 +139,15 @@ signal). Both `0` disables the pre-commit warning entirely.
 
 After installing, open Claude Code in the project and check:
 
-- `/hooks` lists SessionStart, PostToolUse, Stop and SessionEnd from *Project Settings*.
+- `/hooks` lists SessionStart and PostToolUse from *Project Settings*.
 - `/context` shows each `.claude/rules/*.md` file once (not twice) under Memory files.
 - `/permissions` shows the `deny` rules from `.claude/settings.json`.
-- The first reply of a new session on a branch with a task file knows where the task stopped.
+- After `/update-memory-bank`, the first reply of a new session knows where the task stopped.
 
 ## Developing this template
 
 ```
-python3 -m unittest discover -s tests -v   # 30 end-to-end tests, stdlib only
+python3 -m unittest discover -s tests -v   # end-to-end tests, stdlib only
 python3 scripts/memory-lint.py
 ```
 
@@ -142,16 +155,12 @@ CI runs both on Linux and macOS (bash 3.2) with Python 3.9 and 3.12.
 
 ## Memory rules
 
-- Record only what can't be inferred from the code or git log.
-- Snapshots (`project-state.md`, `tasks/<branch>.md`) are overwritten, never appended.
-- One file per ADR. Superseded, never deleted.
-- Budgets are enforced; over budget means merge or delete stale entries, not trim words.
-- Project knowledge goes in `.claude/memory/` (shared, reviewed). Claude's auto memory is for
-  personal preferences.
+See [`.claude/rules/memory-files.md`](.claude/rules/memory-files.md), the single source; budgets
+are in `scripts/memory-lint.py`.
 
 ## Credits
 
-- Memory-bank layout inspired by [centminmod/my-claude-code-setup](https://github.com/centminmod/my-claude-code-setup).
+- Flat memory-bank layout and the "read when" map from [centminmod/my-claude-code-setup](https://github.com/centminmod/my-claude-code-setup).
 - `coding-guidelines.md` from [forrestchang/andrej-karpathy-skills](https://github.com/forrestchang/andrej-karpathy-skills) (MIT).
-- Commit-stamped handoffs inspired by HumanLayer's `create_handoff` / `resume_handoff` commands.
+- Handoff snapshot inspired by HumanLayer's `create_handoff` / `resume_handoff` commands.
 - Re-injecting context on `SessionStart` (including after compaction) follows the pattern used by [obra/superpowers](https://github.com/obra/superpowers).

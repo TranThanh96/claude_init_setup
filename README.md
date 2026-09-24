@@ -17,38 +17,27 @@ short and pointing at code that still exists.
 
 ## 1. Install (once per machine)
 
-Pick one. The slash command is enough if you only use Claude Code.
-
-**A. Claude Code slash command** — installs the latest template from GitHub on every run:
-
 ```sh
-mkdir -p ~/.claude/commands
-curl -fsSL https://raw.githubusercontent.com/TranThanh96/claude_init_setup/main/init-agent.md \
-  -o ~/.claude/commands/init-agent.md
+curl -fsSL --create-dirs -o ~/.claude/commands/init-agent.md \
+  https://raw.githubusercontent.com/TranThanh96/claude_init_setup/main/init-agent.md
 ```
 
-**B. Terminal command** — works without Claude Code:
-
-```sh
-git clone https://github.com/TranThanh96/claude_init_setup.git ~/workspace/claude_init_setup
-ln -sf ~/workspace/claude_init_setup/init_agent.sh ~/.local/bin/init_agent   # a symlink, not a copy
-```
-
-The clone is both the script and the template it installs; `git pull` in it updates both.
+That's all: it adds the `/init-agent` command to Claude Code. Nothing else is cloned or kept on
+the machine — each run of `/init-agent` fetches the latest template from GitHub and keeps the
+command itself up to date.
+(No Claude Code? See [Without Claude Code](#without-claude-code).)
 
 ## 2. Add it to a project
 
-1. Open Claude Code in the project and run `/init-agent`
-   (or, from a terminal: `init_agent path/to/project`).
+1. Open Claude Code in the project and run `/init-agent`.
 2. The installer copies the files that are missing and **never overwrites existing ones**. If
    the project already has a `CLAUDE.md` or `.claude/settings.json`, it stages a `.template`
    next to it; with `/init-agent`, Claude merges it and shows you the diff.
 3. `/init-agent` then reads your code, build files and CI and proposes the `CLAUDE.md` sections:
    Overview, Commands, Gotchas. Check them: **Gotchas** — traps a new engineer would fall into —
-   is the most valuable part. (With the terminal command, fill these in yourself.)
-4. Optional: `/init-agent` proposes a `.claude/checks.json` built from the linters the project
-   already uses (terminal: copy `.claude/checks.example.json` and trim it). Claude then gets
-   their errors right after each edit.
+   is the most valuable part.
+4. It also proposes a `.claude/checks.json` built from the linters the project already uses,
+   so Claude gets their errors right after each edit. Optional: accept or skip.
 5. Commit. `.claude/memory/active.md` is added to `.gitignore` for you — it stays local.
 
 The installer also sets up a git `pre-commit` hook (unless one already exists; then it prints
@@ -109,8 +98,7 @@ rules are in [`.claude/rules/memory-files.md`](.claude/rules/memory-files.md).
 
 **Upgrade a project** that already has any version installed:
 
-- `/init-agent` — it detects the existing install and upgrades.
-- Or from a terminal: `init_agent --upgrade path/to/project`.
+Run `/init-agent` in it again: it detects the existing install and upgrades.
 
 | Files | On upgrade |
 | --- | --- |
@@ -121,11 +109,8 @@ Review with `git diff` and commit. Upgrading from an older layout (v1: `CLAUDE-*
 v2: `.claude/memory/tasks/`, `project-state.md`, `decisions/`) also prints a migration prompt for
 Claude; nothing old is moved or deleted without your approval.
 
-**Update the installers themselves:**
-
-- Terminal: `git -C ~/workspace/claude_init_setup pull`.
-- Slash command: it clones the latest template on every run, but the command file is a local
-  copy. Re-run the `curl` from step 1 when a release changes `init-agent.md` itself.
+**Update `/init-agent` itself:** nothing to do. Every run fetches the latest template, and if
+the command file has changed too, it replaces `~/.claude/commands/init-agent.md` with the new one.
 
 ## 6. Troubleshooting
 
@@ -205,6 +190,22 @@ With the [pre-commit](https://pre-commit.com) framework, add to `.pre-commit-con
       pass_filenames: false
       files: ^(CLAUDE\.md|\.claude/)
 ```
+
+## Without Claude Code
+
+The installer is a plain bash script; `/init-agent` just runs it and then does the merging and
+`CLAUDE.md` drafting for you. To use it directly:
+
+```sh
+git clone https://github.com/TranThanh96/claude_init_setup.git ~/workspace/claude_init_setup
+ln -sf ~/workspace/claude_init_setup/init_agent.sh ~/.local/bin/init_agent   # a symlink, not a copy
+init_agent path/to/project              # install
+init_agent --upgrade path/to/project    # upgrade an existing install
+git -C ~/workspace/claude_init_setup pull   # update the installer + template
+```
+
+Then do by hand what `/init-agent` would: merge any staged `*.template` files, fill in the
+`CLAUDE.md` sections, and optionally copy `.claude/checks.example.json` to `.claude/checks.json`.
 
 ## Developing this template
 

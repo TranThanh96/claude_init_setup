@@ -26,6 +26,9 @@ current project, or into $ARGUMENTS if given. Never overwrite a file silently.
    before writing.
 6. Propose a `.claude/checks.json` from `.claude/checks.example.json` using only linters/type
    checkers the project already uses. Don't introduce new tools.
-7. Run `python3 scripts/memory-lint.py` and fix all errors. Delete the scratch clone.
-8. Report: created / updated / skipped / merged / migrated / filled in, and anything left for me
-   to decide. On an upgrade, show `git diff --stat` of the updated files.
+7. Run `python3 scripts/memory-lint.py` and fix all errors.
+8. Self-update: if `<tmpdir>/init-agent.md` differs from `~/.claude/commands/init-agent.md`,
+   copy it over and say so (the new version applies from the next run). Do this before deleting
+   the scratch clone.
+9. Report: created / updated / skipped / merged / migrated / filled in, and anything left for me
+   to decide. On an upgrade, show `git diff --stat` of the updated files. Delete the scratch clone.

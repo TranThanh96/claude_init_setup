@@ -29,6 +29,11 @@ BUDGETS = {
 }
 ALWAYS_LOADED_RULES_BUDGET = 150  # total lines across .claude/rules/*.md without `paths`
 PLACEHOLDER_RE = re.compile(r"<\.\.\.>")
+MEMORY_FILES = ("active.md", "decisions.md", "patterns.md", "troubleshooting.md")
+REF_FILES = ("patterns.md", "troubleshooting.md")  # every entry must cite a file
+# A backticked repo path with at least one directory: `src/x.py`, `src/x.py:10-20`, `src/api/`.
+# Branch names like `feat/login` have no extension and aren't matched.
+PATH_REF_RE = re.compile(r"(?P<path>(?:[\w.-]+/)+(?:[\w.-]*\.[A-Za-z0-9]+)?)(?::(?P<line>\d+)(?:-(?P<end>\d+))?)?")
 
 
 class Report:
@@ -91,6 +96,47 @@ def check_rules(r: Report) -> None:
             r.warn("CLAUDE.md still contains template placeholders (<...>).")
 
 
+def strip_comments(text: str) -> str:
+    return re.sub(r"<!--.*?-->", "", text, flags=re.S)
+
+
+def path_refs(text: str) -> list[re.Match]:
+    return [m for span in re.findall(r"`([^`\n]+)`", text) if (m := PATH_REF_RE.fullmatch(span))]
+
+
+def reference_sources() -> list[Path]:
+    files = [MEM / name for name in MEMORY_FILES]
+    rules_dir = ROOT / ".claude" / "rules"
+    if rules_dir.is_dir():
+        # Module rules hold memory; memory-files.md only describes the format (with example paths).
+        files += [p for p in sorted(rules_dir.rglob("*.md"))
+                  if p.name != "memory-files.md" and has_paths_frontmatter(p.read_text(encoding="utf-8"))]
+    return [p for p in files if p.is_file()]
+
+
+def check_references(r: Report) -> None:
+    for src in reference_sources():
+        rel_src = src.relative_to(ROOT)
+        for m in path_refs(strip_comments(src.read_text(encoding="utf-8"))):
+            target = ROOT / m["path"]
+            if not target.exists():
+                r.error(f"{rel_src}: `{m.group(0)}` does not exist. Update or remove the entry.")
+            elif m["line"] and target.is_file():
+                n = len(target.read_text(encoding="utf-8", errors="replace").splitlines())
+                last = int(m["end"] or m["line"])
+                if last > n:
+                    r.warn(f"{rel_src}: `{m.group(0)}` points past the end of the file ({n} lines).")
+
+    for name in REF_FILES:
+        p = MEM / name
+        if not p.is_file():
+            continue
+        for entry in re.split(r"^(?=## )", strip_comments(p.read_text(encoding="utf-8")), flags=re.M):
+            if entry.startswith("## ") and not path_refs(entry):
+                title = entry.splitlines()[0][3:].strip()
+                r.warn(f"{name}: entry '{title}' cites no file (`path/to/file`), so it can't be verified.")
+
+
 def check_active_ignored(r: Report) -> None:
     if git("rev-parse", "--git-dir") is None:
         return  # not a git repo
@@ -110,7 +156,7 @@ def main() -> int:
         return 0
 
     r = Report()
-    for check in (check_budgets, check_rules, check_active_ignored):
+    for check in (check_budgets, check_rules, check_references, check_active_ignored):
         check(r)
 
     for msg in r.errors:

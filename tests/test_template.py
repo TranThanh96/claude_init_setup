@@ -142,6 +142,55 @@ class TestInstaller(TemplateTestCase):
         self.assertTrue((self.p.root / ".claude/memory/tasks/main.md").is_file(), "v2 files must not be moved")
 
 
+class TestUpgrade(TemplateTestCase):
+    HOOK = ".claude/hooks/session_start.py"
+
+    def run_installer(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["bash", str(TEMPLATE / "init_agent.sh"), *args, str(self.p.root)],
+                              env=self.p.env, capture_output=True, text=True)
+
+    def make_outdated(self) -> None:
+        self.p.write(self.HOOK, "# old version\n")
+        self.p.commit("old hook")
+
+    def test_without_flag_reports_outdated_but_keeps_it(self):
+        self.make_outdated()
+        res = self.run_installer()
+        self.assertIn("1 of these differ from the template's version", res.stdout)
+        self.assertEqual((self.p.root / self.HOOK).read_text(), "# old version\n")
+
+    def test_upgrade_replaces_committed_template_files(self):
+        self.make_outdated()
+        res = self.run_installer("--upgrade")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn(f"^ {self.HOOK}", res.stdout)
+        self.assertEqual((self.p.root / self.HOOK).read_text(), (TEMPLATE / self.HOOK).read_text())
+
+    def test_upgrade_keeps_files_with_uncommitted_changes(self):
+        self.make_outdated()
+        self.p.write(self.HOOK, "# my local edit\n")
+        res = self.run_installer("--upgrade")
+        self.assertIn(f"! {self.HOOK}", res.stdout)
+        self.assertEqual((self.p.root / self.HOOK).read_text(), "# my local edit\n")
+
+    def test_upgrade_never_touches_user_owned_files(self):
+        self.p.write("CLAUDE.md", "# mine\n")
+        self.p.write(".claude/rules/core-rules.md", "# my rules\n")
+        self.p.write(".claude/memory/patterns.md", "# my patterns\n")
+        self.p.commit("customise")
+        self.run_installer("--upgrade")
+        self.assertEqual((self.p.root / "CLAUDE.md").read_text(), "# mine\n")
+        self.assertEqual((self.p.root / ".claude/rules/core-rules.md").read_text(), "# my rules\n")
+        self.assertEqual((self.p.root / ".claude/memory/patterns.md").read_text(), "# my patterns\n")
+        self.assertTrue((self.p.root / "CLAUDE.md.template").is_file())
+
+    def test_upgrade_outside_git_keeps_files(self):
+        shutil.rmtree(self.p.root / ".git")
+        self.p.write(self.HOOK, "# old version\n")
+        res = self.run_installer("--upgrade")
+        self.assertIn(f"! {self.HOOK}", res.stdout)
+
+
 class TestSessionStart(TemplateTestCase):
     def test_injects_active_with_age(self):
         f = self.write_active("<!-- note for humans -->\n# Task: demo task\n")
@@ -336,6 +385,34 @@ class TestMemoryLint(TemplateTestCase):
     def test_over_budget(self):
         self.p.write(".claude/memory/patterns.md", "".join(f"- p{i}\n" for i in range(200)))
         self.assertIn("patterns.md: 200 content lines > budget 150", self.p.lint().stdout)
+
+    def test_dead_reference_is_an_error(self):
+        self.p.write(".claude/memory/patterns.md", "# Patterns\n## Handlers\n- See `src/gone.py`\n")
+        res = self.p.lint()
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("patterns.md: `src/gone.py` does not exist", res.stdout)
+
+    def test_reference_past_end_of_file_warns(self):
+        self.p.write("src/real.py", "x = 1\n")
+        self.p.write(".claude/memory/troubleshooting.md", "# T\n## Boom\n- Fix: `src/real.py:5-9`\n")
+        res = self.p.lint()
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("`src/real.py:5-9` points past the end of the file (1 lines)", res.stdout)
+
+    def test_valid_references_pass(self):
+        self.p.write("src/real.py", "x = 1\ny = 2\n")
+        self.p.write(".claude/memory/patterns.md",
+                     "# P\n## A\n- `src/real.py:2`\n## B\n- `src/`, branch `feat/login`\n")
+        out = self.p.lint().stdout
+        self.assertNotIn("patterns.md", out)
+
+    def test_entry_without_reference_warns(self):
+        self.p.write(".claude/memory/troubleshooting.md", "# T\n## Flaky CI\n- Cause: runners are slow\n")
+        self.assertIn("entry 'Flaky CI' cites no file", self.p.lint().stdout)
+
+    def test_module_rule_references_are_checked(self):
+        self.p.write(".claude/rules/api.md", '---\npaths:\n  - "src/api/**"\n---\n- Pattern: `src/api/base.py`\n')
+        self.assertIn(".claude/rules/api.md: `src/api/base.py` does not exist", self.p.lint().stdout)
 
     def test_active_over_budget(self):
         self.write_active("".join(f"- s{i}\n" for i in range(41)))

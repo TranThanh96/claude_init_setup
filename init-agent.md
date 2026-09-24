@@ -8,7 +8,9 @@ current project, or into $ARGUMENTS if given. Never overwrite a file silently.
 
 1. Target = $ARGUMENTS or the current working directory. Shallow-clone the template to a scratch
    dir: `git clone --depth 1 https://github.com/TranThanh96/claude_init_setup.git <tmpdir>`.
-2. Run `bash <tmpdir>/init_agent.sh <target>` with `INIT_AGENT_TEMPLATE=<tmpdir>`. It copies missing
+2. Run `bash <tmpdir>/init_agent.sh <target>` with `INIT_AGENT_TEMPLATE=<tmpdir>`; add `--upgrade`
+   before `<target>` if the target already has `.claude/memory/` (it then refreshes the
+   template-owned hooks, scripts and skills, skipping any with uncommitted changes). It copies missing
    files, skips existing ones, stages `CLAUDE.md.template` / `settings.json.template` when those
    already exist, adds `.claude/memory/active.md` to `.gitignore`, detects a v1 or v2 layout,
    and installs a `git pre-commit` hook that warns on memory drift (only if the target doesn't
@@ -25,4 +27,5 @@ current project, or into $ARGUMENTS if given. Never overwrite a file silently.
 6. Propose a `.claude/checks.json` from `.claude/checks.example.json` using only linters/type
    checkers the project already uses. Don't introduce new tools.
 7. Run `python3 scripts/memory-lint.py` and fix all errors. Delete the scratch clone.
-8. Report: created / skipped / merged / migrated / filled in, and anything left for me to decide.
+8. Report: created / updated / skipped / merged / migrated / filled in, and anything left for me
+   to decide. On an upgrade, show `git diff --stat` of the updated files.

@@ -185,10 +185,16 @@ class TestUpgrade(TemplateTestCase):
         self.assertTrue((self.p.root / "CLAUDE.md.template").is_file())
 
     def test_upgrade_outside_git_keeps_files(self):
-        shutil.rmtree(self.p.root / ".git")
-        self.p.write(self.HOOK, "# old version\n")
-        res = self.run_installer("--upgrade")
+        # A fresh directory, not a deleted .git: removing .git races git's background
+        # maintenance (maintenance.lock) on macOS runners.
+        target = self._tmp / "nogit"
+        env = {**self.p.env, "GIT_CEILING_DIRECTORIES": str(self._tmp)}
+        install = ["bash", str(TEMPLATE / "init_agent.sh")]
+        subprocess.run([*install, str(target)], env=env, capture_output=True, text=True, check=True)
+        (target / self.HOOK).write_text("# old version\n")
+        res = subprocess.run([*install, "--upgrade", str(target)], env=env, capture_output=True, text=True)
         self.assertIn(f"! {self.HOOK}", res.stdout)
+        self.assertEqual((target / self.HOOK).read_text(), "# old version\n")
 
 
 class TestSessionStart(TemplateTestCase):

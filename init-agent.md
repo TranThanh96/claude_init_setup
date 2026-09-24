@@ -1,5 +1,5 @@
 ---
-description: Scaffold or upgrade the claude_init_setup memory bank (v2) in this project, or in the directory given as an argument.
+description: Scaffold or upgrade the claude_init_setup memory bank (v3) in this project, or in the directory given as an argument.
 disable-model-invocation: true
 ---
 
@@ -10,18 +10,18 @@ current project, or into $ARGUMENTS if given. Never overwrite a file silently.
    dir: `git clone --depth 1 https://github.com/TranThanh96/claude_init_setup.git <tmpdir>`.
 2. Run `bash <tmpdir>/init_agent.sh <target>` with `INIT_AGENT_TEMPLATE=<tmpdir>`. It copies missing
    files, skips existing ones, stages `CLAUDE.md.template` / `settings.json.template` when those
-   already exist, detects a v1 layout, and installs a `git pre-commit` hook that warns on memory
-   drift (only if the target doesn't already have one). Read its full output.
+   already exist, adds `.claude/memory/active.md` to `.gitignore`, detects a v1 or v2 layout,
+   and installs a `git pre-commit` hook that warns on memory drift (only if the target doesn't
+   already have one). Read its full output.
 3. If templates were staged, do the merge the script's prompt describes. Keep all existing project
    content; remove `@.claude/rules/...` imports (rules auto-load, so importing duplicates them).
    Show me the diffs of CLAUDE.md and settings.json and wait for approval.
-4. If a v1 layout was detected, propose the migration the script describes (activeContext split into
-   project-state + tasks/<branch>, one file per ADR + INDEX, patterns/troubleshooting moved, old
-   update-memory-bank command removed). Show the diff; delete v1 files only after I approve.
-5. For newly created files that still have placeholders (CLAUDE.md Overview/Commands/Gotchas,
-   project-state.md): read the project's actual source, build files, and CI config, and propose
-   real content. Gotchas must come from evidence in the repo (comments, CI steps, configs), not
-   generic advice. Present the proposal before writing.
+4. If a v1 or v2 layout was detected, propose the migration the script's prompt describes. Show
+   the diff; delete old files only after I approve.
+5. If CLAUDE.md was newly created and still has placeholders (Overview/Commands/Gotchas): read
+   the project's actual source, build files, and CI config, and propose real content. Gotchas must come from
+   evidence in the repo (comments, CI steps, configs), not generic advice. Present the proposal
+   before writing.
 6. Propose a `.claude/checks.json` from `.claude/checks.example.json` using only linters/type
    checkers the project already uses. Don't introduce new tools.
 7. Run `python3 scripts/memory-lint.py` and fix all errors. Delete the scratch clone.

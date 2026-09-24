@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Scaffold the claude_init_setup memory bank (v2) into a project.
+# Scaffold the claude_init_setup memory bank (v3) into a project.
 #
 # Usage:
 #   init_agent [target_dir]
@@ -13,8 +13,10 @@
 #   - CLAUDE.md and .claude/settings.json are special-cased: if the target already
 #     has one, the template is staged next to it (*.template) and a merge prompt
 #     is printed for your coding agent. A script can't safely merge markdown/JSON.
-#   - A v1 layout (CLAUDE-*.md in the project root) is detected and a migration
-#     prompt is printed. Nothing from v1 is moved or deleted automatically.
+#   - .claude/memory/active.md (the local work snapshot) is added to .gitignore.
+#   - An older layout (v1: CLAUDE-*.md in the project root; v2: .claude/memory/tasks/,
+#     project-state.md, decisions/) is detected and a migration prompt is printed.
+#     Nothing old is moved or deleted automatically.
 
 set -euo pipefail
 
@@ -22,7 +24,7 @@ TEMPLATE_DIR="${INIT_AGENT_TEMPLATE:-$HOME/workspace/claude_init_setup}"
 TARGET_DIR="${1:-.}"
 
 if [[ ! -f "$TEMPLATE_DIR/CLAUDE.md" || ! -d "$TEMPLATE_DIR/.claude/memory" ]]; then
-  echo "error: v2 template not found at $TEMPLATE_DIR (set INIT_AGENT_TEMPLATE to override)" >&2
+  echo "error: template not found at $TEMPLATE_DIR (set INIT_AGENT_TEMPLATE to override)" >&2
   exit 1
 fi
 command -v python3 >/dev/null || echo "warning: python3 not found on PATH; hooks and memory-lint need it." >&2
@@ -37,18 +39,12 @@ FILES=(
   ".claude/rules/coding-guidelines.md"
   ".claude/rules/memory-files.md"
   ".claude/hooks/session_start.py"
-  ".claude/hooks/stop_memory_nudge.py"
   ".claude/hooks/post_edit_check.py"
-  ".claude/hooks/session_end.py"
-  ".claude/skills/project-memory/SKILL.md"
   ".claude/skills/update-memory-bank/SKILL.md"
   ".claude/skills/memory-audit/SKILL.md"
-  ".claude/memory/project-state.md"
+  ".claude/memory/decisions.md"
   ".claude/memory/patterns.md"
   ".claude/memory/troubleshooting.md"
-  ".claude/memory/decisions/INDEX.md"
-  ".claude/memory/decisions/ADR-000-template.md"
-  ".claude/memory/tasks/_TEMPLATE.md"
   "scripts/memory-lint.py"
   "scripts/pre_commit_memory_check.py"
 )
@@ -79,6 +75,16 @@ done
 
 chmod +x "$TARGET_DIR"/.claude/hooks/*.py "$TARGET_DIR/scripts"/*.py 2>/dev/null || true
 
+# active.md is a per-checkout snapshot, never committed.
+gitignore_msg=""
+if ! grep -qxF ".claude/memory/active.md" "$TARGET_DIR/.gitignore" 2>/dev/null; then
+  if [[ -s "$TARGET_DIR/.gitignore" && -n "$(tail -c 1 "$TARGET_DIR/.gitignore")" ]]; then
+    echo >> "$TARGET_DIR/.gitignore"
+  fi
+  echo ".claude/memory/active.md" >> "$TARGET_DIR/.gitignore"
+  gitignore_msg="added to .gitignore: .claude/memory/active.md (local work snapshot)"
+fi
+
 # Real git hook (not a Claude Code hook): fires for any commit, from any tool,
 # by any developer -- not just inside a Claude Code session. Never overwritten.
 precommit_msg=""
@@ -99,7 +105,7 @@ HOOK
   fi
 fi
 
-echo "== init_agent (v2): $TARGET_DIR =="
+echo "== init_agent (v3): $TARGET_DIR =="
 echo "created:"
 for f in "${created[@]:-}"; do [[ -n "$f" ]] && echo "  + $f"; done
 echo "skipped (already exists):"
@@ -130,26 +136,45 @@ if compgen -G "$TARGET_DIR/CLAUDE-*.md" >/dev/null; then
 Detected a v1 memory bank (CLAUDE-*.md in the project root). Hand this prompt to your agent:
 ---
 Migrate the v1 memory bank into .claude/memory/ (read .claude/rules/memory-files.md first):
-- CLAUDE-activeContext.md → split: project-level state into .claude/memory/project-state.md;
-  the current task into .claude/memory/tasks/<branch>.md (branch "/" → "__", use _TEMPLATE.md).
-- CLAUDE-decisions.md → one file per ADR in .claude/memory/decisions/ADR-NNN-slug.md, keeping
-  numbers and statuses, plus one line each in decisions/INDEX.md.
+- CLAUDE-activeContext.md → the current task into .claude/memory/active.md (sections as in the
+  update-memory-bank skill); lasting constraints into the "## Gotchas" section of CLAUDE.md.
+- CLAUDE-decisions.md → .claude/memory/decisions.md, newest first, keeping statuses.
 - CLAUDE-patterns.md → .claude/memory/patterns.md; CLAUDE-troubleshooting.md →
   .claude/memory/troubleshooting.md (append below the header, drop obsolete entries).
 - .claude/commands/update-memory-bank.md (v1) is replaced by the update-memory-bank skill,
   which has the same /name. Delete the old command so the two don't collide.
-- In .claude/rules/core-rules.md, drop the "remind me to run /update-memory-bank" rule:
-  the Stop hook now does that.
 - Run python3 scripts/memory-lint.py until it reports no errors.
 - Show me the diff. Only after I approve, git rm the old CLAUDE-*.md files.
 ---
 EOF
 fi
 
-if [[ -n "$precommit_msg" ]]; then
-  echo
-  echo "$precommit_msg"
+if [[ -d "$TARGET_DIR/.claude/memory/tasks" || -f "$TARGET_DIR/.claude/memory/project-state.md" \
+      || -d "$TARGET_DIR/.claude/memory/decisions" ]]; then
+  cat <<'EOF'
+
+Detected a v2 memory bank (tasks/, project-state.md or decisions/ in .claude/memory/).
+Hand this prompt to your agent:
+---
+Migrate the v2 memory bank to v3 (read .claude/rules/memory-files.md first):
+- tasks/<current branch>.md → .claude/memory/active.md (local, gitignored). Other task files:
+  move durable learnings to troubleshooting.md / patterns.md, then drop them.
+- project-state.md → lasting constraints into "## Gotchas" in CLAUDE.md; current focus into
+  active.md. Then delete it.
+- decisions/ADR-*.md → one entry each in .claude/memory/decisions.md, newest first, keeping
+  statuses; then delete decisions/.
+- Delete .claude/hooks/stop_memory_nudge.py, .claude/hooks/session_end.py and
+  .claude/skills/project-memory/, and remove the Stop and SessionEnd entries for them from
+  .claude/settings.json. Replace the "## Project memory" section of CLAUDE.md with the template's.
+- Run python3 scripts/memory-lint.py until it reports no errors.
+- Show me the diff. Only after I approve, git rm the old files.
+---
+EOF
 fi
+
+for msg in "$gitignore_msg" "$precommit_msg"; do
+  [[ -n "$msg" ]] && { echo; echo "$msg"; }
+done
 
 echo
 echo "Next: fill CLAUDE.md (Overview, Commands, Gotchas), copy .claude/checks.example.json to"

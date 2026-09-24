@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Git pre-commit hook: warn when code has drifted from the last memory update.
+"""Git pre-commit hook: warn when memory is over budget or has drifted from the code.
 
 Not a Claude Code hook -- a plain git hook, installed at .git/hooks/pre-commit
 by init_agent.sh, so it fires for every commit, from any tool, by any
 developer, whether or not they're using Claude Code.
 
-No session state or /tmp marker: it finds the last commit that touched
-.claude/memory/ straight from git log, and measures drift since then. Warns
-to stderr, never blocks: exit 0 always.
-
-Tune with MEMORY_NUDGE_MIN_FILES (default 3) and MEMORY_NUDGE_MIN_COMMITS
-(default 5) -- either signal crossing its threshold warns. Set both to 0 to
-disable.
+Two checks, both warnings to stderr, never blocking (exit 0 always):
+  - memory-lint errors (size budgets etc.), so an oversized memory file is
+    seen on every commit, not only where CI or checks.json runs the linter.
+  - drift: files and commits since memory was last updated -- the later of
+    the last commit that touched .claude/memory/ and the last write of the
+    gitignored active.md (which never shows up in git log). Tune with MEMORY_NUDGE_MIN_FILES
+    (default 3) and MEMORY_NUDGE_MIN_COMMITS (default 5); either crossing its
+    threshold warns, both 0 disables this check.
 """
 from __future__ import annotations
 
@@ -36,20 +37,48 @@ def git_lines(*args: str) -> list[str]:
     return [line for line in out.splitlines() if line.strip()] if out else []
 
 
+def memory_baseline() -> str | None:
+    """Commit at which memory was last updated, or None if it never was."""
+    last = git("log", "-1", "--format=%H", "--", ".claude/memory") or None
+    active = Path(".claude/memory/active.md")
+    if not active.is_file():
+        return last
+    # Last commit made before active.md was written: the snapshot covers it.
+    at = git("rev-list", "-1", f"--before=@{int(active.stat().st_mtime)}", "HEAD") or None
+    if last is None or at is None:
+        return at or last
+    return at if git("merge-base", "--is-ancestor", last, at) is not None else last
+
+
+def lint_errors() -> list[str]:
+    script = Path("scripts/memory-lint.py")
+    if not script.is_file():
+        return []
+    try:
+        out = subprocess.run([sys.executable, str(script), "--quiet"],
+                             capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return [line for line in out.stdout.splitlines() if line.startswith("ERROR")]
+
+
 def main() -> int:
+    if not Path(".claude/memory").is_dir():
+        return 0  # project not initialised with the memory bank
+
+    for line in lint_errors():
+        print(f"pre-commit: memory-lint {line}", file=sys.stderr)
+
     file_threshold = int(os.environ.get("MEMORY_NUDGE_MIN_FILES", "3"))
     commit_threshold = int(os.environ.get("MEMORY_NUDGE_MIN_COMMITS", "5"))
     if file_threshold <= 0 and commit_threshold <= 0:
         return 0
 
-    if not Path(".claude/memory").is_dir():
-        return 0  # project not initialised with the memory bank
-
     staged = git_lines("diff", "--cached", "--name-only")
     if any(p.startswith(MEMORY_PREFIX) for p in staged):
         return 0  # this commit updates memory
 
-    last = git("log", "-1", "--format=%H", "--", ".claude/memory")
+    last = memory_baseline()
     if not last:
         return 0  # no baseline yet
 

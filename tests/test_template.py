@@ -78,24 +78,14 @@ class TemplateTestCase(unittest.TestCase):
         self.assertEqual(res.returncode, 0, res.stderr)
         return json.loads(res.stdout)["hookSpecificOutput"]["additionalContext"] if res.stdout else ""
 
-    def stop(self, **kw) -> str:
-        payload = {"session_id": self.sid, "stop_hook_active": False, **kw}
-        res = self.p.hook("stop_memory_nudge.py", payload)
-        self.assertEqual(res.returncode, 0, res.stderr)
-        return res.stdout
-
-    def add_task_file(self, branch: str) -> None:
-        tpl = (self.p.root / ".claude/memory/tasks/_TEMPLATE.md").read_text()
-        text = (tpl.replace("<branch name>", branch)
-                   .replace("<short sha at time of writing>", self.p.git("rev-parse", "--short", "HEAD"))
-                   .replace("<one-line description>", "demo task"))
-        self.p.write(f".claude/memory/tasks/{branch.replace('/', '__')}.md", text)
+    def write_active(self, body: str = "# Task: demo task\n## Status\n- [ ] next  ← resume here\n") -> Path:
+        return self.p.write(".claude/memory/active.md", body)
 
 
 class TestInstaller(TemplateTestCase):
     def test_fresh_install_creates_everything(self):
         for rel in (".claude/settings.json", ".claude/hooks/session_start.py",
-                    ".claude/skills/project-memory/SKILL.md", "scripts/memory-lint.py"):
+                    ".claude/skills/update-memory-bank/SKILL.md", "scripts/memory-lint.py"):
             self.assertTrue((self.p.root / rel).is_file(), rel)
         json.loads((self.p.root / ".claude/settings.json").read_text())
 
@@ -131,110 +121,71 @@ class TestInstaller(TemplateTestCase):
         self.assertIn("Detected a v1 memory bank", res.stdout)
         self.assertTrue((self.p.root / "CLAUDE-activeContext.md").is_file(), "v1 files must not be moved")
 
+    def test_active_md_is_gitignored_once(self):
+        self.assertEqual(self.p.git("check-ignore", ".claude/memory/active.md"), ".claude/memory/active.md")
+        subprocess.run(["bash", str(TEMPLATE / "init_agent.sh"), str(self.p.root)],
+                       env=self.p.env, capture_output=True, text=True, check=True)
+        self.assertEqual((self.p.root / ".gitignore").read_text().count("active.md"), 1)
+
+    def test_appends_to_existing_gitignore_without_newline(self):
+        (self.p.root / ".gitignore").write_text("node_modules/")
+        subprocess.run(["bash", str(TEMPLATE / "init_agent.sh"), str(self.p.root)],
+                       env=self.p.env, capture_output=True, text=True, check=True)
+        self.assertEqual((self.p.root / ".gitignore").read_text(),
+                         "node_modules/\n.claude/memory/active.md\n")
+
+    def test_v2_layout_is_detected(self):
+        self.p.write(".claude/memory/tasks/main.md", "# old\n")
+        res = subprocess.run(["bash", str(TEMPLATE / "init_agent.sh"), str(self.p.root)],
+                             env=self.p.env, capture_output=True, text=True)
+        self.assertIn("Detected a v2 memory bank", res.stdout)
+        self.assertTrue((self.p.root / ".claude/memory/tasks/main.md").is_file(), "v2 files must not be moved")
+
 
 class TestSessionStart(TemplateTestCase):
-    def test_injects_branch_task_file_with_staleness(self):
-        self.p.git("checkout", "-qb", "feat/login")
-        self.add_task_file("feat/login")
-        self.p.commit("task")
+    def test_injects_active_with_age(self):
+        f = self.write_active("<!-- note for humans -->\n# Task: demo task\n")
+        past = int(self.p.git("log", "-1", "--format=%ct")) - 60
+        os.utime(f, (past, past))
         self.p.write("app.py", "print('changed')\n")
         self.p.commit("more")
         ctx = self.start()
-        self.assertIn("branch 'feat/login'", ctx)
-        self.assertIn("2 commit(s) have landed", ctx)
+        self.assertIn("# Task: demo task", ctx)
+        self.assertIn("2 commit(s) have landed since then", ctx)
         self.assertNotIn("<!--", ctx, "HTML comments must be stripped")
-        self.assertNotIn("git_commit:", ctx, "frontmatter must be stripped")
 
-    def test_reports_missing_task_file(self):
-        self.p.git("checkout", "-qb", "feat/x")
-        self.assertIn("No task file exists for branch 'feat/x'", self.start())
+    def test_reports_missing_active(self):
+        self.assertIn("No work in progress is recorded", self.start())
 
-    def test_skips_unfilled_project_state(self):
-        self.assertIn("has not been filled in yet", self.start())
+    def test_reports_uncommitted_changes(self):
+        self.assertNotIn("uncommitted", self.start())
+        self.p.write("app.py", "print('dirty')\n")
+        self.p.write("new.py", "x = 1\n")
+        self.assertIn("2 uncommitted change(s)", self.start())
+
+    def test_active_is_not_counted_as_uncommitted(self):
+        self.write_active()
+        self.assertNotIn("uncommitted", self.start())
 
     def test_compact_reinjects_and_says_so(self):
-        self.assertIn("just compacted", self.start("compact"))
+        self.write_active()
+        ctx = self.start("compact")
+        self.assertIn("just compacted", ctx)
+        self.assertIn("# Task: demo task", ctx)
 
     def test_silent_in_uninitialised_project(self):
         shutil.rmtree(self.p.root / ".claude" / "memory")
         res = self.p.hook("session_start.py", {"session_id": self.sid, "source": "startup"})
         self.assertEqual((res.returncode, res.stdout), (0, ""))
 
-    def test_output_is_capped(self):
-        self.p.git("checkout", "-qb", "big")
-        self.add_task_file("big")
-        with open(self.p.root / ".claude/memory/tasks/big.md", "a") as f:
-            f.write("- filler line for size\n" * 2000)
-        self.assertLess(len(self.start()), 10_000)
-
-
-class TestStopNudge(TemplateTestCase):
-    def touch(self, n: int) -> None:
-        for i in range(n):
-            self.p.write(f"src/f{i}.py", f"x = {i}\n")
-
-    def test_below_threshold_is_silent(self):
-        self.start()
-        self.touch(2)
-        self.assertEqual(self.stop(), "")
-
-    def test_nudges_exactly_once(self):
-        self.start()
-        self.touch(3)
-        out = json.loads(self.stop())
-        self.assertEqual(out["decision"], "block")
-        self.assertEqual(self.stop(), "")
-
-    def test_resume_and_clear_do_not_reset_the_nudge(self):
-        self.start()
-        self.touch(3)
-        self.assertTrue(self.stop())
-        self.start("resume")
-        self.start("clear")
-        self.assertEqual(self.stop(), "", "must not nudge again after resume/clear")
-
-    def test_memory_change_suppresses_nudge(self):
-        self.start()
-        self.touch(3)
-        self.p.write(".claude/memory/patterns.md", "# Patterns\n- x\n")
-        self.assertEqual(self.stop(), "")
-
-    def test_counts_commits_made_during_session(self):
-        self.start()
-        self.touch(3)
-        self.p.commit("session work")
-        self.assertTrue(self.stop(), "committed changes must count")
-
-    def test_counts_files_in_untracked_directories(self):
-        self.start()
-        self.touch(3)  # all inside a new, untracked src/ directory
-        self.assertIn("3 file(s)", self.stop())
-
-    def test_stop_hook_active_never_blocks(self):
-        self.start()
-        self.touch(5)
-        self.assertEqual(self.stop(stop_hook_active=True), "")
-
-    def test_can_be_disabled(self):
-        self.start()
-        self.touch(5)
-        res = self.p.hook("stop_memory_nudge.py", {"session_id": self.sid, "stop_hook_active": False},
-                          {"MEMORY_NUDGE_MIN_FILES": "0"})
-        self.assertEqual(res.stdout, "")
-
-    def test_session_end_removes_marker(self):
-        self.start()
-        tmp = Path(self.p.env["TMPDIR"])
-        self.assertTrue(list(tmp.glob("claude-memory-*.json")))
-        self.p.hook("session_end.py", {"session_id": self.sid, "reason": "prompt_input_exit"})
-        self.assertFalse(list(tmp.glob("claude-memory-*.json")))
-
-    def test_hostile_session_id_stays_in_tmpdir(self):
-        self.sid = "../../evil"
-        self.start()
-        tmp = Path(self.p.env["TMPDIR"])
-        self.assertTrue(list(tmp.glob("claude-memory-*evil.json")))
-        self.assertFalse((self.p.root.parent / "evil.json").exists())
+    def test_output_is_capped_and_short_facts_survive(self):
+        self.write_active("# Task: big\n" + "- filler line for size\n" * 2000)
+        self.p.write("app.py", "print('dirty')\n")
+        ctx = self.start("compact")
+        self.assertLess(len(ctx), 10_000)
+        self.assertIn("just compacted", ctx)
+        self.assertIn("uncommitted", ctx)
+        self.assertIn("[truncated", ctx)
 
 
 class TestPostEditCheck(TemplateTestCase):
@@ -267,10 +218,10 @@ class TestPostEditCheck(TemplateTestCase):
 
     def test_bad_memory_edit_is_caught(self):
         self.configure()
-        self.p.write(".claude/memory/decisions/ADR-001-x.md", "# ADR-001: x\n- Status: active\n")
-        res = self.edit(".claude/memory/decisions/ADR-001-x.md")
+        self.p.write(".claude/memory/decisions.md", "".join(f"- d{i}\n" for i in range(200)))
+        res = self.edit(".claude/memory/decisions.md")
         self.assertEqual(res.returncode, 2)
-        self.assertIn("not listed in decisions/INDEX.md", res.stderr)
+        self.assertIn("decisions.md: 200 content lines > budget 150", res.stderr)
 
 
 class TestPreCommitCheck(TemplateTestCase):
@@ -308,6 +259,27 @@ class TestPreCommitCheck(TemplateTestCase):
         res = self.check()
         self.assertIn("5 commit(s)", res.stderr)
 
+    def five_small_commits(self) -> None:
+        for i in range(5):
+            self.touch_and_stage(1, start=i)
+            self.p.commit(f"small {i}")
+
+    def test_fresh_active_md_resets_the_baseline(self):
+        # active.md is gitignored, so updating it never moves the git-log baseline.
+        self.five_small_commits()
+        self.write_active()
+        self.touch_and_stage(1, start=5)
+        res = self.check()
+        self.assertEqual((res.returncode, res.stderr), (0, ""))
+
+    def test_stale_active_md_does_not_hide_drift(self):
+        f = self.write_active()
+        past = int(self.p.git("log", "-1", "--format=%ct")) - 60
+        os.utime(f, (past, past))
+        self.five_small_commits()
+        self.touch_and_stage(1, start=5)
+        self.assertIn("5 commit(s)", self.check().stderr)
+
     def test_staged_memory_change_suppresses_warning(self):
         self.touch_and_stage(5)
         self.p.write(".claude/memory/patterns.md", "# Patterns\n- x\n")
@@ -326,6 +298,16 @@ class TestPreCommitCheck(TemplateTestCase):
         self.touch_and_stage(5)
         res = self.check()
         self.assertEqual((res.returncode, res.stderr), (0, ""))
+
+    def test_reports_memory_over_budget_even_with_drift_disabled(self):
+        self.p.write(".claude/memory/decisions.md", "".join(f"- d{i}\n" for i in range(200)))
+        res = self.check({"MEMORY_NUDGE_MIN_FILES": "0", "MEMORY_NUDGE_MIN_COMMITS": "0"})
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("memory-lint ERROR  .claude/memory/decisions.md: 200 content lines > budget 150", res.stderr)
+
+    def test_lint_warnings_are_not_repeated_on_commit(self):
+        (self.p.root / ".gitignore").write_text("")  # lint WARN: active.md not gitignored
+        self.assertNotIn("memory-lint", self.check().stderr)
 
     def test_never_exits_nonzero(self):
         self.touch_and_stage(50)
@@ -355,26 +337,14 @@ class TestMemoryLint(TemplateTestCase):
         self.p.write(".claude/memory/patterns.md", "".join(f"- p{i}\n" for i in range(200)))
         self.assertIn("patterns.md: 200 content lines > budget 150", self.p.lint().stdout)
 
-    def test_adr_index_consistency_and_duplicates(self):
-        d = ".claude/memory/decisions/"
-        self.p.write(d + "ADR-001-a.md", "# a\n- Status: active\n")
-        self.p.write(d + "ADR-001-b.md", "# b\n- Status: active\n")
-        self.p.write(d + "ADR-002-c.md", "# c\n")
-        with open(self.p.root / d / "INDEX.md", "a") as f:
-            f.write("| [ADR-009](ADR-009-gone.md) | gone | active | x |\n")
-        out = self.p.lint().stdout
-        self.assertIn("Duplicate ADR number 001", out)
-        self.assertIn("ADR-002-c.md: missing 'Status", out)
-        self.assertIn("ADR-009-gone.md, which does not exist", out)
+    def test_active_over_budget(self):
+        self.write_active("".join(f"- s{i}\n" for i in range(41)))
+        self.assertIn("active.md: 41 content lines > budget 40", self.p.lint().stdout)
 
-    def test_orphaned_and_done_task_files(self):
-        self.p.write(".claude/memory/tasks/feat__gone.md", "---\nstatus: in-progress\n---\n")
-        self.add_task_file("main")
-        f = self.p.root / ".claude/memory/tasks/main.md"
-        f.write_text(f.read_text().replace("status: in-progress", "status: done"))
-        out = self.p.lint().stdout
-        self.assertIn("branch 'feat/gone' no longer exists", out)
-        self.assertIn("tasks/main.md: status is done", out)
+    def test_warns_when_active_is_not_gitignored(self):
+        self.assertNotIn("not gitignored", self.p.lint().stdout)
+        (self.p.root / ".gitignore").write_text("")
+        self.assertIn("active.md is not gitignored", self.p.lint().stdout)
 
 
 if __name__ == "__main__":

@@ -2,14 +2,19 @@
 # Scaffold the claude_init_setup memory bank (v3) into a project.
 #
 # Usage:
-#   init_agent [target_dir]
+#   init_agent [--upgrade] [target_dir]
 #
 # Env:
 #   INIT_AGENT_TEMPLATE  path to the template repo (default: ~/workspace/claude_init_setup)
 #
 # Behavior:
 #   - Files that don't exist in the target are copied as-is.
-#   - Files that already exist are never overwritten.
+#   - Files that already exist are never overwritten, except with --upgrade:
+#     template-owned files (hooks, scripts, the two skills, memory-files.md,
+#     checks.example.json) are replaced by the template's version when they
+#     have no uncommitted changes; otherwise they are skipped with a warning.
+#     User-owned files (CLAUDE.md, settings.json, core rules, memory content)
+#     are never overwritten.
 #   - CLAUDE.md and .claude/settings.json are special-cased: if the target already
 #     has one, the template is staged next to it (*.template) and a merge prompt
 #     is printed for your coding agent. A script can't safely merge markdown/JSON.
@@ -21,6 +26,11 @@
 set -euo pipefail
 
 TEMPLATE_DIR="${INIT_AGENT_TEMPLATE:-$HOME/workspace/claude_init_setup}"
+UPGRADE=0
+if [[ "${1:-}" == "--upgrade" ]]; then
+  UPGRADE=1
+  shift
+fi
 TARGET_DIR="${1:-.}"
 
 if [[ ! -f "$TEMPLATE_DIR/CLAUDE.md" || ! -d "$TEMPLATE_DIR/.claude/memory" ]]; then
@@ -49,21 +59,53 @@ FILES=(
   "scripts/pre_commit_memory_check.py"
 )
 MERGE_FILES=("CLAUDE.md" ".claude/settings.json")
+# Owned by the template, not the project: --upgrade may replace these.
+TEMPLATE_OWNED=(
+  ".claude/checks.example.json"
+  ".claude/rules/memory-files.md"
+  ".claude/hooks/session_start.py"
+  ".claude/hooks/post_edit_check.py"
+  ".claude/skills/update-memory-bank/SKILL.md"
+  ".claude/skills/memory-audit/SKILL.md"
+  "scripts/memory-lint.py"
+  "scripts/pre_commit_memory_check.py"
+)
+
+# True when replacing the file could lose work: uncommitted or untracked
+# changes, or no git repo to recover from.
+has_local_changes() {
+  local out
+  out="$(git -C "$TARGET_DIR" status --porcelain -- "$1" 2>/dev/null)" || return 0
+  [[ -n "$out" ]]
+}
 
 created=()
 skipped=()
 staged=()
+updated=()
+kept=()
+outdated=0
 
 for file in "${FILES[@]}"; do
   src="$TEMPLATE_DIR/$file"
   dst="$TARGET_DIR/$file"
 
   if [[ -f "$dst" ]]; then
-    if [[ " ${MERGE_FILES[*]} " == *" $file "* ]]; then
+    if [[ $UPGRADE -eq 1 && " ${TEMPLATE_OWNED[*]} " == *" $file "* ]] && ! cmp -s "$src" "$dst"; then
+      if has_local_changes "$file"; then
+        kept+=("$file")
+      else
+        cp "$src" "$dst"
+        updated+=("$file")
+      fi
+    elif [[ " ${MERGE_FILES[*]} " == *" $file "* ]]; then
       cp "$src" "$dst.template"
       staged+=("$file")
     else
       skipped+=("$file")
+      if [[ " ${TEMPLATE_OWNED[*]} " == *" $file "* ]] && ! cmp -s "$src" "$dst"; then
+        outdated=$((outdated + 1))
+      fi
     fi
     continue
   fi
@@ -110,6 +152,17 @@ echo "created:"
 for f in "${created[@]:-}"; do [[ -n "$f" ]] && echo "  + $f"; done
 echo "skipped (already exists):"
 for f in "${skipped[@]:-}"; do [[ -n "$f" ]] && echo "  = $f"; done
+if [[ $outdated -gt 0 ]]; then
+  echo "  ($outdated of these differ from the template's version; re-run with --upgrade to update them)"
+fi
+if [[ $UPGRADE -eq 1 ]]; then
+  echo "updated to the template's version (review with: git diff):"
+  for f in "${updated[@]:-}"; do [[ -n "$f" ]] && echo "  ^ $f"; done
+  if [[ ${#kept[@]} -gt 0 ]]; then
+    echo "NOT updated, the file has uncommitted changes (commit or stash them, then re-run):"
+    for f in "${kept[@]}"; do echo "  ! $f"; done
+  fi
+fi
 
 if [[ ${#staged[@]} -gt 0 ]]; then
   echo

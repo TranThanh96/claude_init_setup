@@ -13,7 +13,10 @@ paths:
 - `troubleshooting.md`: symptom / cause / fix / file reference, max ~5 lines each. Delete entries a fix made obsolete.
 - `patterns.md`: one canonical example file per pattern; no pasted code.
 - Size budgets live in `scripts/memory-lint.py`. Over budget → merge or remove stale entries, don't just trim words.
-- Prefer `path/to/file.ext:line` references over pasted code.
+- Cite code as backticked repo paths (`src/x.py`, `src/x.py:10-20`, `src/api/`), never pasted code.
+  Every `patterns.md` / `troubleshooting.md` entry cites at least one; a decision's `Scope` does too.
+  memory-lint checks that cited paths exist, and `/memory-audit` uses them to re-check only
+  entries whose files changed. An entry citing nothing can't be verified.
 - A pattern or decision that applies to one module only goes in `.claude/rules/<module>.md` with
   `paths:` frontmatter for that module, not in the files above: it then loads only when that
   module's files are read, and the shared files keep only what applies project-wide.

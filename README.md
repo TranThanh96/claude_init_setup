@@ -30,7 +30,7 @@ only *asked* to read, the work-in-progress snapshot is **delivered by a hook** a
 | Memory drift, over-budget files | `scripts/pre_commit_memory_check.py` | **git pre-commit hook**: warns, from any tool, any developer |
 | Lint/type errors in edited files | `.claude/checks.json` | **PostToolUse hook** feeds failures back to Claude |
 | Secrets, force-push, hard reset | `.claude/settings.json` | `permissions.deny` |
-| Memory stays small | `scripts/memory-lint.py` | Budgets, `active.md` gitignored (local / pre-commit / CI) |
+| Memory stays small and true | `scripts/memory-lint.py` | Budgets, cited paths exist, every entry cites a file, `active.md` gitignored (local / pre-commit / CI) |
 
 Why `active.md` is gitignored: it is a snapshot of *this checkout's* work, not project knowledge.
 Uncommitted, each worktree has its own, so parallel sessions in separate worktrees never overwrite
@@ -89,11 +89,27 @@ curl -fsSL https://raw.githubusercontent.com/TranThanh96/claude_init_setup/main/
 
 ```
 git clone https://github.com/TranThanh96/claude_init_setup.git ~/workspace/claude_init_setup
-install -m 755 ~/workspace/claude_init_setup/init_agent.sh ~/.local/bin/init_agent
+ln -sf ~/workspace/claude_init_setup/init_agent.sh ~/.local/bin/init_agent   # symlink, not a copy
 init_agent [target_dir]
 ```
 
-Both never overwrite existing files. An existing `CLAUDE.md` or `.claude/settings.json` gets a
+The symlink keeps script and template in one clone: `git -C ~/workspace/claude_init_setup pull`
+updates both.
+
+**Upgrading a project that already has it** (any older version):
+
+```
+init_agent --upgrade [target_dir]      # /init-agent does this by itself when it finds an install
+```
+
+`--upgrade` replaces the template-owned files — hooks, scripts, the two skills,
+`memory-files.md`, `checks.example.json` — with the template's version, but only when they have
+no uncommitted changes (those are listed and left alone; commit or stash, then re-run). Review
+the result with `git diff`. User-owned files — `CLAUDE.md`, `settings.json`, `core-rules.md`,
+`coding-guidelines.md`, and everything in `.claude/memory/` — are never overwritten. Without
+`--upgrade`, the installer only says how many template files are out of date.
+
+Otherwise the installer never overwrites existing files. An existing `CLAUDE.md` or `.claude/settings.json` gets a
 `.template` staged next to it plus a merge prompt. An older layout — v1 (`CLAUDE-*.md` in the root)
 or v2 (`.claude/memory/tasks/`, `project-state.md`, `decisions/`) — is detected and a migration
 prompt is printed; nothing is moved automatically.
@@ -116,7 +132,9 @@ prompt is printed; nothing is moved automatically.
   (git history keeps it).
 - **Task finished:** `/update-memory-bank` moves what's durable into the committed files and
   deletes `active.md`.
-- **Every ~2 weeks or after a model upgrade:** `/memory-audit`.
+- **Every ~2 weeks or after a model upgrade:** `/memory-audit`. It is incremental: it re-checks
+  only entries whose cited files changed since the last `memory-audit:` commit, reading their diffs,
+  never the whole codebase.
 - **CI (optional):** `python3 scripts/memory-lint.py --strict`.
 
 Tuning the pre-commit warning: `MEMORY_NUDGE_MIN_FILES` (default 3) and `MEMORY_NUDGE_MIN_COMMITS`

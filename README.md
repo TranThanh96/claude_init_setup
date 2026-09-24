@@ -171,6 +171,11 @@ python3 scripts/memory-lint.py
 
 CI runs both on Linux and macOS (bash 3.2) with Python 3.9 and 3.12.
 
+Every file here, `CLAUDE.md` and `.claude/memory/` included, is the template that `init_agent`
+copies into other projects. Don't record this repo's own decisions, patterns, or fixes there:
+they would ship to every installed project. Rationale belongs in this README and in commit
+messages; `.claude/memory/active.md` is gitignored, so it is safe to use while working here.
+
 ## Memory rules
 
 See [`.claude/rules/memory-files.md`](.claude/rules/memory-files.md), the single source; budgets

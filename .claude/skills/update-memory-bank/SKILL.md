@@ -31,7 +31,11 @@ If the task is finished, delete `active.md` after step 3 instead.
 - Recurring pattern established → `patterns.md`
 - A pattern or decision for one module only → that module's path-scoped rule (see memory-files.md)
 
-## 4. Verify and report
+## 4. Archive finished tickets (if any)
+Run `python3 scripts/tasks_status.py`. If a feature folder under `.claude/tasks/` has every ticket at
+`status: done`, `git mv` that whole folder in one move to `.claude/tasks/_archive/<feature-slug>/`.
+
+## 5. Verify and report
 - Run `python3 scripts/memory-lint.py`; fix every error.
 - Show the user `git diff -- .claude/memory/` and the new `active.md` (it is gitignored, so it
   isn't in the diff). Summarise in 3-5 lines what was recorded and where.

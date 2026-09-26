@@ -2,17 +2,28 @@
 # Scaffold the claude_init_setup memory bank (v3) into a project.
 #
 # Usage:
-#   init_agent [--upgrade] [target_dir]
+#   init_agent [--upgrade] [--with-workflow] [target_dir]
 #
 # Env:
 #   INIT_AGENT_TEMPLATE  path to the template repo (default: ~/workspace/claude_init_setup)
 #
+# Tiers:
+#   - core (default): the memory bank only -- active.md snapshot, decisions/patterns/
+#     troubleshooting.md, hooks, lint. What most projects need.
+#   - --with-workflow: adds the ticket workflow on top -- grilling/to-spec/to-tickets/
+#     implementation/tdd/debugging/ticket-review skills, AGENTS.md, routing.json, and
+#     scripts/tasks_status.py. For projects that plan large features spec-first or
+#     delegate tickets across Claude/Codex/Antigravity.
+#   A target that already has .claude/rules/workflow.md keeps the workflow tier
+#   automatically; --with-workflow is only needed to add it for the first time.
+#
 # Behavior:
 #   - Files that don't exist in the target are copied as-is.
 #   - Files that already exist are never overwritten, except with --upgrade:
-#     template-owned files (hooks, scripts, the two skills, memory-files.md,
-#     checks.example.json) are replaced by the template's version when they
-#     have no uncommitted changes; otherwise they are skipped with a warning.
+#     template-owned files (hooks, scripts, the memory-bank skills, memory-files.md,
+#     checks.example.json, and -- with the workflow tier -- the workflow skills and
+#     routing.example.json) are replaced by the template's version when they have no
+#     uncommitted changes; otherwise they are skipped with a warning.
 #     User-owned files (CLAUDE.md, settings.json, core rules, memory content)
 #     are never overwritten.
 #   - CLAUDE.md and .claude/settings.json are special-cased: if the target already
@@ -27,11 +38,21 @@ set -euo pipefail
 
 TEMPLATE_DIR="${INIT_AGENT_TEMPLATE:-$HOME/workspace/claude_init_setup}"
 UPGRADE=0
-if [[ "${1:-}" == "--upgrade" ]]; then
-  UPGRADE=1
+WORKFLOW=0
+while [[ "${1:-}" == --* ]]; do
+  case "$1" in
+    --upgrade) UPGRADE=1 ;;
+    --with-workflow) WORKFLOW=1 ;;
+    *) echo "error: unknown flag $1" >&2; exit 1 ;;
+  esac
   shift
-fi
+done
 TARGET_DIR="${1:-.}"
+
+# A target already on the workflow tier keeps it, without needing the flag again.
+if [[ -f "$TARGET_DIR/.claude/rules/workflow.md" ]]; then
+  WORKFLOW=1
+fi
 
 if [[ ! -f "$TEMPLATE_DIR/CLAUDE.md" || ! -d "$TEMPLATE_DIR/.claude/memory" ]]; then
   echo "error: template not found at $TEMPLATE_DIR (set INIT_AGENT_TEMPLATE to override)" >&2
@@ -41,7 +62,7 @@ command -v python3 >/dev/null || echo "warning: python3 not found on PATH; hooks
 
 mkdir -p "$TARGET_DIR"
 
-FILES=(
+CORE_FILES=(
   "CLAUDE.md"
   ".claude/settings.json"
   ".claude/checks.example.json"
@@ -58,9 +79,27 @@ FILES=(
   "scripts/memory-lint.py"
   "scripts/pre_commit_memory_check.py"
 )
-MERGE_FILES=("CLAUDE.md" ".claude/settings.json")
+# Ticket workflow tier: spec-first planning and ticket delegation across coding
+# agents. Installed only with --with-workflow (see the tiers note above).
+WORKFLOW_FILES=(
+  "AGENTS.md"
+  ".claude/routing.example.json"
+  ".claude/rules/workflow.md"
+  ".claude/skills/grilling/SKILL.md"
+  ".claude/skills/to-spec/SKILL.md"
+  ".claude/skills/to-tickets/SKILL.md"
+  ".claude/skills/implementation/SKILL.md"
+  ".claude/skills/tdd/SKILL.md"
+  ".claude/skills/debugging/SKILL.md"
+  ".claude/skills/ticket-review/SKILL.md"
+  "scripts/tasks_status.py"
+)
+FILES=("${CORE_FILES[@]}")
+[[ $WORKFLOW -eq 1 ]] && FILES+=("${WORKFLOW_FILES[@]}")
+
+MERGE_FILES=("CLAUDE.md" "AGENTS.md" ".claude/settings.json")
 # Owned by the template, not the project: --upgrade may replace these.
-TEMPLATE_OWNED=(
+CORE_TEMPLATE_OWNED=(
   ".claude/checks.example.json"
   ".claude/rules/memory-files.md"
   ".claude/hooks/session_start.py"
@@ -70,6 +109,20 @@ TEMPLATE_OWNED=(
   "scripts/memory-lint.py"
   "scripts/pre_commit_memory_check.py"
 )
+WORKFLOW_TEMPLATE_OWNED=(
+  ".claude/routing.example.json"
+  ".claude/rules/workflow.md"
+  ".claude/skills/grilling/SKILL.md"
+  ".claude/skills/to-spec/SKILL.md"
+  ".claude/skills/to-tickets/SKILL.md"
+  ".claude/skills/implementation/SKILL.md"
+  ".claude/skills/tdd/SKILL.md"
+  ".claude/skills/debugging/SKILL.md"
+  ".claude/skills/ticket-review/SKILL.md"
+  "scripts/tasks_status.py"
+)
+TEMPLATE_OWNED=("${CORE_TEMPLATE_OWNED[@]}")
+[[ $WORKFLOW -eq 1 ]] && TEMPLATE_OWNED+=("${WORKFLOW_TEMPLATE_OWNED[@]}")
 
 # True when replacing the file could lose work: uncommitted or untracked
 # changes, or no git repo to recover from.
@@ -147,7 +200,9 @@ HOOK
   fi
 fi
 
-echo "== init_agent (v3): $TARGET_DIR =="
+tier="core"
+[[ $WORKFLOW -eq 1 ]] && tier="core + workflow"
+echo "== init_agent (v3, $tier): $TARGET_DIR =="
 echo "created:"
 for f in "${created[@]:-}"; do [[ -n "$f" ]] && echo "  + $f"; done
 echo "skipped (already exists):"
@@ -178,7 +233,9 @@ Merge the staged *.template files into their originals, then delete the .templat
   loads automatically, so importing a rule injects it twice.
 - .claude/settings.json: add the template's hooks and permissions.deny entries to the existing
   arrays. Do not remove or reorder existing entries. Validate the result is valid JSON.
-Show me both diffs before finishing.
+- AGENTS.md: keep every existing line; append the template's pointer lines (to .claude/rules/ and
+  .claude/skills/implementation/SKILL.md) if they aren't already there in some form.
+Show me all diffs before finishing.
 ---
 EOF
 fi
@@ -232,3 +289,10 @@ done
 echo
 echo "Next: fill CLAUDE.md (Overview, Commands, Gotchas), copy .claude/checks.example.json to"
 echo ".claude/checks.json for per-edit lint, then run: python3 scripts/memory-lint.py"
+if [[ $WORKFLOW -eq 1 ]]; then
+  echo "Workflow tier: copy .claude/routing.example.json to .claude/routing.json (fill in"
+  echo "codex/antigravity model names once you've used them)."
+else
+  echo "Ticket workflow (grilling/to-spec/to-tickets/implementation/tdd/debugging/ticket-review,"
+  echo "AGENTS.md, routing.json) not installed. Re-run with --with-workflow to add it later."
+fi

@@ -54,6 +54,9 @@ class Project:
 
 
 class TemplateTestCase(unittest.TestCase):
+    # Subclasses that need the ticket workflow tier (e.g. tasks_status.py) override this.
+    INSTALL_ARGS: tuple[str, ...] = ()
+
     def setUp(self) -> None:
         self._tmp = Path(tempfile.mkdtemp(prefix="cis-test-"))
         (self._tmp / "tmp").mkdir()
@@ -64,7 +67,8 @@ class TemplateTestCase(unittest.TestCase):
         self.p.git("config", "user.email", "t@example.com")
         self.p.git("config", "user.name", "test")
         self.p.env["INIT_AGENT_TEMPLATE"] = str(TEMPLATE)
-        self.install = self.p.sh("bash", str(TEMPLATE / "init_agent.sh"), str(root), check=False)
+        self.install = self.p.sh("bash", str(TEMPLATE / "init_agent.sh"), *self.INSTALL_ARGS,
+                                  str(root), check=False)
         self.assertEqual(self.install.returncode, 0, self.install.stderr)
         self.p.write("app.py", "print('hi')\n")
         self.p.commit("init")
@@ -83,21 +87,43 @@ class TemplateTestCase(unittest.TestCase):
 
 
 class TestInstaller(TemplateTestCase):
-    def test_fresh_install_creates_everything(self):
+    WORKFLOW_ONLY_FILES = (
+        "AGENTS.md", ".claude/rules/workflow.md", ".claude/routing.example.json",
+        "scripts/tasks_status.py", ".claude/skills/to-tickets/SKILL.md",
+        ".claude/skills/implementation/SKILL.md", ".claude/skills/ticket-review/SKILL.md",
+    )
+
+    def test_fresh_install_creates_core_files_by_default(self):
         for rel in (".claude/settings.json", ".claude/hooks/session_start.py",
                     ".claude/skills/update-memory-bank/SKILL.md", "scripts/memory-lint.py"):
             self.assertTrue((self.p.root / rel).is_file(), rel)
         json.loads((self.p.root / ".claude/settings.json").read_text())
 
+    def test_fresh_install_skips_workflow_files_by_default(self):
+        for rel in self.WORKFLOW_ONLY_FILES:
+            self.assertFalse((self.p.root / rel).exists(), rel)
+
+    def test_with_workflow_flag_adds_ticket_workflow_files(self):
+        res = subprocess.run(["bash", str(TEMPLATE / "init_agent.sh"), "--with-workflow", str(self.p.root)],
+                             env=self.p.env, capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        for rel in self.WORKFLOW_ONLY_FILES:
+            self.assertTrue((self.p.root / rel).is_file(), rel)
+
     def test_existing_files_are_never_overwritten(self):
         self.p.write("CLAUDE.md", "# mine\n")
         self.p.write(".claude/settings.json", '{"model": "opus"}\n')
-        res = subprocess.run(["bash", str(TEMPLATE / "init_agent.sh"), str(self.p.root)],
+        self.p.write("AGENTS.md", "# my agents file\n")
+        # AGENTS.md is workflow-tier: pass --with-workflow so its merge-vs-overwrite
+        # behaviour is actually exercised.
+        res = subprocess.run(["bash", str(TEMPLATE / "init_agent.sh"), "--with-workflow", str(self.p.root)],
                              env=self.p.env, capture_output=True, text=True)
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual((self.p.root / "CLAUDE.md").read_text(), "# mine\n")
         self.assertTrue((self.p.root / "CLAUDE.md.template").is_file())
         self.assertTrue((self.p.root / ".claude/settings.json.template").is_file())
+        self.assertEqual((self.p.root / "AGENTS.md").read_text(), "# my agents file\n")
+        self.assertTrue((self.p.root / "AGENTS.md.template").is_file())
 
     def test_installs_git_pre_commit_hook_when_absent(self):
         hook = self.p.root / ".git/hooks/pre-commit"
@@ -183,6 +209,19 @@ class TestUpgrade(TemplateTestCase):
         self.assertEqual((self.p.root / ".claude/rules/core-rules.md").read_text(), "# my rules\n")
         self.assertEqual((self.p.root / ".claude/memory/patterns.md").read_text(), "# my patterns\n")
         self.assertTrue((self.p.root / "CLAUDE.md.template").is_file())
+
+    def test_upgrade_autodetects_installed_workflow_tier(self):
+        # setUp already installed core-only; add the workflow tier explicitly once,
+        # then upgrade WITHOUT --with-workflow and confirm it still refreshes it.
+        ticket_skill = ".claude/skills/to-tickets/SKILL.md"
+        subprocess.run(["bash", str(TEMPLATE / "init_agent.sh"), "--with-workflow", str(self.p.root)],
+                       env=self.p.env, capture_output=True, text=True, check=True)
+        self.p.write(ticket_skill, "# old version\n")
+        self.p.commit("old ticket skill")
+        res = self.run_installer("--upgrade")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn(f"^ {ticket_skill}", res.stdout)
+        self.assertEqual((self.p.root / ticket_skill).read_text(), (TEMPLATE / ticket_skill).read_text())
 
     def test_upgrade_outside_git_keeps_files(self):
         # A fresh directory, not a deleted .git: removing .git races git's background
@@ -428,6 +467,56 @@ class TestMemoryLint(TemplateTestCase):
         self.assertNotIn("not gitignored", self.p.lint().stdout)
         (self.p.root / ".gitignore").write_text("")
         self.assertIn("active.md is not gitignored", self.p.lint().stdout)
+
+
+class TestTasksStatus(TemplateTestCase):
+    INSTALL_ARGS = ("--with-workflow",)  # scripts/tasks_status.py is workflow-tier
+
+    def write_ticket(self, feature: str, ticket_id: str, **fields) -> None:
+        fm = {"id": ticket_id, "title": "Do the thing", "status": "ready",
+              "depends_on": "[]", "assigned_to": "null", "complexity": "small", **fields}
+        body = "---\n" + "\n".join(f"{k}: {v}" for k, v in fm.items()) + "\n---\nbody\n"
+        self.p.write(f".claude/tasks/{feature}/{ticket_id}-ticket.md", body)
+
+    def status(self, *args: str) -> subprocess.CompletedProcess:
+        return self.p.sh("python3", "scripts/tasks_status.py", *args, check=False)
+
+    def test_silent_without_tasks_dir(self):
+        res = self.status()
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("not found", res.stdout)
+
+    def test_lists_tickets_and_filters_by_status(self):
+        self.write_ticket("demo", "01", status="done")
+        self.write_ticket("demo", "02", status="ready", depends_on="[01]")
+        out = self.status().stdout
+        self.assertIn("01", out)
+        self.assertIn("02", out)
+        ready_only = self.status("--status", "ready").stdout
+        self.assertIn("02", ready_only)
+        self.assertNotIn("done", ready_only)
+
+    def test_filters_by_feature(self):
+        self.write_ticket("demo-a", "01")
+        self.write_ticket("demo-b", "01")
+        out = self.status("--feature", "demo-a").stdout
+        self.assertIn("demo-a", out)
+        self.assertNotIn("demo-b", out)
+
+    def test_dangling_depends_on_is_an_error(self):
+        self.write_ticket("demo", "01", depends_on="[99]")
+        res = self.status()
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("depends_on '99' does not match any ticket", res.stdout)
+
+    def test_archived_and_spec_files_are_ignored(self):
+        self.write_ticket("demo", "01")
+        self.p.write(".claude/tasks/demo/SPEC.md", "# Spec\n")
+        self.p.write(".claude/tasks/_archive/old-feature/01-ticket.md",
+                     "---\nid: 01\ntitle: old\nstatus: done\n---\n")
+        out = self.status().stdout
+        self.assertIn("demo", out)
+        self.assertNotIn("old-feature", out)
 
 
 if __name__ == "__main__":

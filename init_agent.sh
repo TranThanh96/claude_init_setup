@@ -1,42 +1,28 @@
 #!/usr/bin/env bash
-# Scaffold the claude_init_setup memory bank (v3) into a project.
+# Orchestrator: install claude_memory_bank (always) and claude_ticket_workflow
+# (with --with-workflow) into a project, by delegating to each repo's own install.sh.
 #
 # Usage:
-#   init_agent [--upgrade] [--with-workflow] [target_dir]
+#   init_agent.sh [--upgrade] [--with-workflow] [target_dir]
 #
-# Env:
-#   INIT_AGENT_TEMPLATE  path to the template repo (default: ~/workspace/claude_init_setup)
+# Env (each may be a git URL or a local path to an existing checkout -- a local path
+# is used as-is, with no clone, which is what the test suite and local development use):
+#   INIT_AGENT_MEMORY_BANK_REPO      default: https://github.com/TranThanh96/claude_memory_bank.git
+#   INIT_AGENT_TICKET_WORKFLOW_REPO  default: https://github.com/TranThanh96/claude_ticket_workflow.git
 #
-# Tiers:
-#   - core (default): the memory bank only -- active.md snapshot, decisions/patterns/
-#     troubleshooting.md, hooks, lint. What most projects need.
-#   - --with-workflow: adds the ticket workflow on top -- grilling/to-spec/to-tickets/
-#     implementation/tdd/debugging/ticket-review skills, AGENTS.md, routing.json, and
-#     scripts/tasks_status.py. For projects that plan large features spec-first or
-#     delegate tickets across Claude/Codex/Antigravity.
-#   A target that already has .claude/rules/workflow.md keeps the workflow tier
-#   automatically; --with-workflow is only needed to add it for the first time.
+# This script owns no template files itself -- it only locates the two source repos
+# (cloning them to a scratch dir if a local path wasn't given) and runs their install.sh
+# against target_dir, forwarding --upgrade. See their own install.sh for what actually
+# gets copied.
 #
-# Behavior:
-#   - Files that don't exist in the target are copied as-is.
-#   - Files that already exist are never overwritten, except with --upgrade:
-#     template-owned files (hooks, scripts, the memory-bank skills, memory-files.md,
-#     checks.example.json, and -- with the workflow tier -- the workflow skills and
-#     routing.example.json) are replaced by the template's version when they have no
-#     uncommitted changes; otherwise they are skipped with a warning.
-#     User-owned files (CLAUDE.md, settings.json, core rules, memory content)
-#     are never overwritten.
-#   - CLAUDE.md and .claude/settings.json are special-cased: if the target already
-#     has one, the template is staged next to it (*.template) and a merge prompt
-#     is printed for your coding agent. A script can't safely merge markdown/JSON.
-#   - .claude/memory/active.md (the local work snapshot) is added to .gitignore.
-#   - An older layout (v1: CLAUDE-*.md in the project root; v2: .claude/memory/tasks/,
-#     project-state.md, decisions/) is detected and a migration prompt is printed.
-#     Nothing old is moved or deleted automatically.
+# A target that already has .claude/rules/workflow.md keeps the workflow tier
+# automatically; --with-workflow is only needed to add it for the first time.
 
 set -euo pipefail
 
-TEMPLATE_DIR="${INIT_AGENT_TEMPLATE:-$HOME/workspace/claude_init_setup}"
+MEMORY_BANK_REPO="${INIT_AGENT_MEMORY_BANK_REPO:-https://github.com/TranThanh96/claude_memory_bank.git}"
+TICKET_WORKFLOW_REPO="${INIT_AGENT_TICKET_WORKFLOW_REPO:-https://github.com/TranThanh96/claude_ticket_workflow.git}"
+
 UPGRADE=0
 WORKFLOW=0
 while [[ "${1:-}" == --* ]]; do
@@ -49,250 +35,47 @@ while [[ "${1:-}" == --* ]]; do
 done
 TARGET_DIR="${1:-.}"
 
-# A target already on the workflow tier keeps it, without needing the flag again.
 if [[ -f "$TARGET_DIR/.claude/rules/workflow.md" ]]; then
   WORKFLOW=1
 fi
 
-if [[ ! -f "$TEMPLATE_DIR/CLAUDE.md" || ! -d "$TEMPLATE_DIR/.claude/memory" ]]; then
-  echo "error: template not found at $TEMPLATE_DIR (set INIT_AGENT_TEMPLATE to override)" >&2
-  exit 1
-fi
-command -v python3 >/dev/null || echo "warning: python3 not found on PATH; hooks and memory-lint need it." >&2
+SCRATCH=""
+cleanup() { if [[ -n "$SCRATCH" ]]; then rm -rf "$SCRATCH"; fi; }
+trap cleanup EXIT
+
+# Prints the local directory to use for $2 (a git URL or local path already), cloning
+# to a fresh scratch dir first if it isn't already a local directory.
+resolve_repo() {
+  local ref="$1" name="$2"
+  if [[ -d "$ref" ]]; then
+    echo "$ref"
+    return
+  fi
+  if [[ -z "$SCRATCH" ]]; then
+    SCRATCH="$(mktemp -d)"
+  fi
+  local dest="$SCRATCH/$name"
+  echo "cloning $ref ..." >&2
+  git clone --depth 1 -q "$ref" "$dest" >&2
+  echo "$dest"
+}
 
 mkdir -p "$TARGET_DIR"
 
-CORE_FILES=(
-  "CLAUDE.md"
-  ".claude/settings.json"
-  ".claude/checks.example.json"
-  ".claude/rules/core-rules.md"
-  ".claude/rules/coding-guidelines.md"
-  ".claude/rules/memory-files.md"
-  ".claude/hooks/session_start.py"
-  ".claude/hooks/post_edit_check.py"
-  ".claude/skills/update-memory-bank/SKILL.md"
-  ".claude/skills/memory-audit/SKILL.md"
-  ".claude/memory/decisions.md"
-  ".claude/memory/patterns.md"
-  ".claude/memory/troubleshooting.md"
-  "scripts/memory-lint.py"
-  "scripts/pre_commit_memory_check.py"
-)
-# Ticket workflow tier: spec-first planning and ticket delegation across coding
-# agents. Installed only with --with-workflow (see the tiers note above).
-WORKFLOW_FILES=(
-  "AGENTS.md"
-  ".claude/routing.example.json"
-  ".claude/rules/workflow.md"
-  ".claude/skills/grilling/SKILL.md"
-  ".claude/skills/to-spec/SKILL.md"
-  ".claude/skills/to-tickets/SKILL.md"
-  ".claude/skills/implementation/SKILL.md"
-  ".claude/skills/tdd/SKILL.md"
-  ".claude/skills/debugging/SKILL.md"
-  ".claude/skills/ticket-review/SKILL.md"
-  "scripts/tasks_status.py"
-)
-FILES=("${CORE_FILES[@]}")
-[[ $WORKFLOW -eq 1 ]] && FILES+=("${WORKFLOW_FILES[@]}")
+FLAGS=()
+[[ $UPGRADE -eq 1 ]] && FLAGS+=("--upgrade")
 
-MERGE_FILES=("CLAUDE.md" "AGENTS.md" ".claude/settings.json")
-# Owned by the template, not the project: --upgrade may replace these.
-CORE_TEMPLATE_OWNED=(
-  ".claude/checks.example.json"
-  ".claude/rules/memory-files.md"
-  ".claude/hooks/session_start.py"
-  ".claude/hooks/post_edit_check.py"
-  ".claude/skills/update-memory-bank/SKILL.md"
-  ".claude/skills/memory-audit/SKILL.md"
-  "scripts/memory-lint.py"
-  "scripts/pre_commit_memory_check.py"
-)
-WORKFLOW_TEMPLATE_OWNED=(
-  ".claude/routing.example.json"
-  ".claude/rules/workflow.md"
-  ".claude/skills/grilling/SKILL.md"
-  ".claude/skills/to-spec/SKILL.md"
-  ".claude/skills/to-tickets/SKILL.md"
-  ".claude/skills/implementation/SKILL.md"
-  ".claude/skills/tdd/SKILL.md"
-  ".claude/skills/debugging/SKILL.md"
-  ".claude/skills/ticket-review/SKILL.md"
-  "scripts/tasks_status.py"
-)
-TEMPLATE_OWNED=("${CORE_TEMPLATE_OWNED[@]}")
-[[ $WORKFLOW -eq 1 ]] && TEMPLATE_OWNED+=("${WORKFLOW_TEMPLATE_OWNED[@]}")
+MEMORY_BANK_DIR="$(resolve_repo "$MEMORY_BANK_REPO" memory_bank)"
+echo "== claude_memory_bank =="
+bash "$MEMORY_BANK_DIR/install.sh" "${FLAGS[@]}" "$TARGET_DIR"
 
-# True when replacing the file could lose work: uncommitted or untracked
-# changes, or no git repo to recover from.
-has_local_changes() {
-  local out
-  out="$(git -C "$TARGET_DIR" status --porcelain -- "$1" 2>/dev/null)" || return 0
-  [[ -n "$out" ]]
-}
-
-created=()
-skipped=()
-staged=()
-updated=()
-kept=()
-outdated=0
-
-for file in "${FILES[@]}"; do
-  src="$TEMPLATE_DIR/$file"
-  dst="$TARGET_DIR/$file"
-
-  if [[ -f "$dst" ]]; then
-    if [[ $UPGRADE -eq 1 && " ${TEMPLATE_OWNED[*]} " == *" $file "* ]] && ! cmp -s "$src" "$dst"; then
-      if has_local_changes "$file"; then
-        kept+=("$file")
-      else
-        cp "$src" "$dst"
-        updated+=("$file")
-      fi
-    elif [[ " ${MERGE_FILES[*]} " == *" $file "* ]]; then
-      cp "$src" "$dst.template"
-      staged+=("$file")
-    else
-      skipped+=("$file")
-      if [[ " ${TEMPLATE_OWNED[*]} " == *" $file "* ]] && ! cmp -s "$src" "$dst"; then
-        outdated=$((outdated + 1))
-      fi
-    fi
-    continue
-  fi
-
-  mkdir -p "$(dirname "$dst")"
-  cp "$src" "$dst"
-  created+=("$file")
-done
-
-chmod +x "$TARGET_DIR"/.claude/hooks/*.py "$TARGET_DIR/scripts"/*.py 2>/dev/null || true
-
-# active.md is a per-checkout snapshot, never committed.
-gitignore_msg=""
-if ! grep -qxF ".claude/memory/active.md" "$TARGET_DIR/.gitignore" 2>/dev/null; then
-  if [[ -s "$TARGET_DIR/.gitignore" && -n "$(tail -c 1 "$TARGET_DIR/.gitignore")" ]]; then
-    echo >> "$TARGET_DIR/.gitignore"
-  fi
-  echo ".claude/memory/active.md" >> "$TARGET_DIR/.gitignore"
-  gitignore_msg="added to .gitignore: .claude/memory/active.md (local work snapshot)"
-fi
-
-# Real git hook (not a Claude Code hook): fires for any commit, from any tool,
-# by any developer -- not just inside a Claude Code session. Never overwritten.
-precommit_msg=""
-if [[ -d "$TARGET_DIR/.git" ]]; then
-  hook_dst="$TARGET_DIR/.git/hooks/pre-commit"
-  if [[ -e "$hook_dst" ]]; then
-    precommit_msg="$TARGET_DIR/.git/hooks/pre-commit already exists; not touching it. To get the
-memory-drift warning, add this line to it (or your hook manager):
-  python3 \"\$(git rev-parse --show-toplevel)/scripts/pre_commit_memory_check.py\""
-  else
-    mkdir -p "$(dirname "$hook_dst")"
-    cat > "$hook_dst" <<'HOOK'
-#!/bin/sh
-exec python3 "$(git rev-parse --show-toplevel)/scripts/pre_commit_memory_check.py"
-HOOK
-    chmod +x "$hook_dst"
-    precommit_msg="installed: .git/hooks/pre-commit (warns before commit if memory looks stale)"
-  fi
-fi
-
-tier="core"
-[[ $WORKFLOW -eq 1 ]] && tier="core + workflow"
-echo "== init_agent (v3, $tier): $TARGET_DIR =="
-echo "created:"
-for f in "${created[@]:-}"; do [[ -n "$f" ]] && echo "  + $f"; done
-echo "skipped (already exists):"
-for f in "${skipped[@]:-}"; do [[ -n "$f" ]] && echo "  = $f"; done
-if [[ $outdated -gt 0 ]]; then
-  echo "  ($outdated of these differ from the template's version; re-run with --upgrade to update them)"
-fi
-if [[ $UPGRADE -eq 1 ]]; then
-  echo "updated to the template's version (review with: git diff):"
-  for f in "${updated[@]:-}"; do [[ -n "$f" ]] && echo "  ^ $f"; done
-  if [[ ${#kept[@]} -gt 0 ]]; then
-    echo "NOT updated, the file has uncommitted changes (commit or stash them, then re-run):"
-    for f in "${kept[@]}"; do echo "  ! $f"; done
-  fi
-fi
-
-if [[ ${#staged[@]} -gt 0 ]]; then
-  echo
-  echo "Already existed, template staged as <file>.template (NOT overwritten):"
-  for f in "${staged[@]}"; do echo "  ~ $f.template"; done
-  cat <<'EOF'
-
-Hand this prompt to your coding agent:
----
-Merge the staged *.template files into their originals, then delete the .template files.
-- CLAUDE.md: add the "## Gotchas" and "## Project memory" sections if missing. Keep every
-  existing section unchanged. Remove any "@.claude/rules/..." import lines: .claude/rules/
-  loads automatically, so importing a rule injects it twice.
-- .claude/settings.json: add the template's hooks and permissions.deny entries to the existing
-  arrays. Do not remove or reorder existing entries. Validate the result is valid JSON.
-- AGENTS.md: keep every existing line; append the template's pointer lines (to .claude/rules/ and
-  .claude/skills/implementation/SKILL.md) if they aren't already there in some form.
-Show me all diffs before finishing.
----
-EOF
-fi
-
-if compgen -G "$TARGET_DIR/CLAUDE-*.md" >/dev/null; then
-  cat <<'EOF'
-
-Detected a v1 memory bank (CLAUDE-*.md in the project root). Hand this prompt to your agent:
----
-Migrate the v1 memory bank into .claude/memory/ (read .claude/rules/memory-files.md first):
-- CLAUDE-activeContext.md → the current task into .claude/memory/active.md (sections as in the
-  update-memory-bank skill); lasting constraints into the "## Gotchas" section of CLAUDE.md.
-- CLAUDE-decisions.md → .claude/memory/decisions.md, newest first, keeping statuses.
-- CLAUDE-patterns.md → .claude/memory/patterns.md; CLAUDE-troubleshooting.md →
-  .claude/memory/troubleshooting.md (append below the header, drop obsolete entries).
-- .claude/commands/update-memory-bank.md (v1) is replaced by the update-memory-bank skill,
-  which has the same /name. Delete the old command so the two don't collide.
-- Run python3 scripts/memory-lint.py until it reports no errors.
-- Show me the diff. Only after I approve, git rm the old CLAUDE-*.md files.
----
-EOF
-fi
-
-if [[ -d "$TARGET_DIR/.claude/memory/tasks" || -f "$TARGET_DIR/.claude/memory/project-state.md" \
-      || -d "$TARGET_DIR/.claude/memory/decisions" ]]; then
-  cat <<'EOF'
-
-Detected a v2 memory bank (tasks/, project-state.md or decisions/ in .claude/memory/).
-Hand this prompt to your agent:
----
-Migrate the v2 memory bank to v3 (read .claude/rules/memory-files.md first):
-- tasks/<current branch>.md → .claude/memory/active.md (local, gitignored). Other task files:
-  move durable learnings to troubleshooting.md / patterns.md, then drop them.
-- project-state.md → lasting constraints into "## Gotchas" in CLAUDE.md; current focus into
-  active.md. Then delete it.
-- decisions/ADR-*.md → one entry each in .claude/memory/decisions.md, newest first, keeping
-  statuses; then delete decisions/.
-- Delete .claude/hooks/stop_memory_nudge.py, .claude/hooks/session_end.py and
-  .claude/skills/project-memory/, and remove the Stop and SessionEnd entries for them from
-  .claude/settings.json. Replace the "## Project memory" section of CLAUDE.md with the template's.
-- Run python3 scripts/memory-lint.py until it reports no errors.
-- Show me the diff. Only after I approve, git rm the old files.
----
-EOF
-fi
-
-for msg in "$gitignore_msg" "$precommit_msg"; do
-  [[ -n "$msg" ]] && { echo; echo "$msg"; }
-done
-
-echo
-echo "Next: fill CLAUDE.md (Overview, Commands, Gotchas), copy .claude/checks.example.json to"
-echo ".claude/checks.json for per-edit lint, then run: python3 scripts/memory-lint.py"
 if [[ $WORKFLOW -eq 1 ]]; then
-  echo "Workflow tier: copy .claude/routing.example.json to .claude/routing.json (fill in"
-  echo "codex/antigravity model names once you've used them)."
+  TICKET_WORKFLOW_DIR="$(resolve_repo "$TICKET_WORKFLOW_REPO" ticket_workflow)"
+  echo
+  echo "== claude_ticket_workflow =="
+  bash "$TICKET_WORKFLOW_DIR/install.sh" "${FLAGS[@]}" "$TARGET_DIR"
 else
+  echo
   echo "Ticket workflow (grilling/to-spec/to-tickets/implementation/tdd/debugging/ticket-review,"
   echo "AGENTS.md, routing.json) not installed. Re-run with --with-workflow to add it later."
 fi

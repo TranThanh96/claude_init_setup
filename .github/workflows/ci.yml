@@ -8,20 +8,26 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]   # macOS ships bash 3.2: catches installer portability bugs
+        os: [ubuntu-latest, macos-latest]   # macOS ships bash 3.2: catches orchestrator portability bugs
         python: ["3.9", "3.12"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: claude_init_setup
+      - uses: actions/checkout@v4
+        with:
+          repository: TranThanh96/claude_memory_bank
+          path: claude_memory_bank
+      - uses: actions/checkout@v4
+        with:
+          repository: TranThanh96/claude_ticket_workflow
+          path: claude_ticket_workflow
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - name: Installer syntax
-        run: bash -n init_agent.sh
-      - name: JSON config is valid
-        run: |
-          python -c "import json; json.load(open('.claude/settings.json')); json.load(open('.claude/checks.example.json'))"
-      - name: Template passes its own lint
-        run: python scripts/memory-lint.py
+      - name: Orchestrator syntax
+        run: bash -n claude_init_setup/init_agent.sh
       - name: End-to-end tests
+        working-directory: claude_init_setup
         run: python -m unittest discover -s tests -v

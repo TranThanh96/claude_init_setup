@@ -19,7 +19,6 @@
 # automatically; --with-workflow is only needed to add it for the first time.
 
 set -euo pipefail
-set -x
 
 MEMORY_BANK_REPO="${INIT_AGENT_MEMORY_BANK_REPO:-https://github.com/TranThanh96/claude_memory_bank.git}"
 TICKET_WORKFLOW_REPO="${INIT_AGENT_TICKET_WORKFLOW_REPO:-https://github.com/TranThanh96/claude_ticket_workflow.git}"
@@ -41,7 +40,13 @@ if [[ -f "$TARGET_DIR/.claude/rules/workflow.md" ]]; then
 fi
 
 SCRATCH=""
-cleanup() { if [[ -n "$SCRATCH" ]]; then rm -rf "$SCRATCH"; fi; }
+# Preserve whatever exit status triggered this trap (0 on success, non-zero from
+# `set -e`) instead of letting cleanup's own commands silently replace it.
+cleanup() {
+  local code=$?
+  if [[ -n "$SCRATCH" ]]; then rm -rf "$SCRATCH"; fi
+  exit "$code"
+}
 trap cleanup EXIT
 
 # Prints the local directory to use for $2 (a git URL or local path already), cloning
@@ -63,18 +68,28 @@ resolve_repo() {
 
 mkdir -p "$TARGET_DIR"
 
-FLAGS=()
-[[ $UPGRADE -eq 1 ]] && FLAGS+=("--upgrade")
+# Forwards --upgrade to <dir>/install.sh without an array: an optional flag held in
+# an empty array and expanded as "${arr[@]}" crashes with "unbound variable" under
+# `set -u` on bash 3.2 (macOS's default /bin/bash), even when explicitly declared
+# empty with `arr=()` -- fixed upstream in bash 4.4, but 3.2 is what macOS ships.
+install_layer() {
+  local dir="$1"
+  if [[ $UPGRADE -eq 1 ]]; then
+    bash "$dir/install.sh" --upgrade "$TARGET_DIR"
+  else
+    bash "$dir/install.sh" "$TARGET_DIR"
+  fi
+}
 
 MEMORY_BANK_DIR="$(resolve_repo "$MEMORY_BANK_REPO" memory_bank)"
 echo "== claude_memory_bank =="
-bash "$MEMORY_BANK_DIR/install.sh" "${FLAGS[@]}" "$TARGET_DIR"
+install_layer "$MEMORY_BANK_DIR"
 
 if [[ $WORKFLOW -eq 1 ]]; then
   TICKET_WORKFLOW_DIR="$(resolve_repo "$TICKET_WORKFLOW_REPO" ticket_workflow)"
   echo
   echo "== claude_ticket_workflow =="
-  bash "$TICKET_WORKFLOW_DIR/install.sh" "${FLAGS[@]}" "$TARGET_DIR"
+  install_layer "$TICKET_WORKFLOW_DIR"
 else
   echo
   echo "Ticket workflow (grilling/to-spec/to-tickets/implementation/tdd/debugging/ticket-review,"

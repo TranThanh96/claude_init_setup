@@ -32,9 +32,16 @@
 - `resolve_repo()` treats an `INIT_AGENT_*_REPO` value that's an existing local directory as
   a checkout to use as-is (no clone); anything else is treated as a git URL and shallow-cloned.
   This is what makes local testing network-free.
-- The `cleanup` trap must never be a bare `[[ cond ]] && action` as its last statement: with
-  `set -e`, that construct's own exit status becomes the script's final exit code when it fires
-  on `EXIT`, silently turning a successful run into a reported failure. Use `if`/`fi` instead.
+- The `cleanup` EXIT trap must capture `$?` on entry and `exit "$code"` explicitly at the end;
+  otherwise its own last command's exit status silently replaces the script's real one (a bare
+  `[[ cond ]] && action` as the trap's last statement turned a successful run into a reported
+  failure; `if`/`fi` alone then masked a real crash as success instead).
+- Never forward an optional flag to a sub-script via an array (`FLAGS=(); [[ cond ]] &&
+  FLAGS+=(...); cmd "${FLAGS[@]}"`): on bash 3.2 (macOS's default `/bin/bash`), `"${FLAGS[@]}"`
+  throws "unbound variable" under `set -u` when the array is empty, even though `FLAGS=()` was
+  explicit — fixed upstream in bash 4.4, but 3.2 is what ships. Caught by this repo's own CI
+  matrix (`macos-latest` job) after it passed on Linux. Branch on the flag with `if`/`else`
+  instead (see `install_layer()` in `init_agent.sh`).
 - Don't add real memory-bank or workflow *content* to this repo's own `.claude/` — it was
   self-installed here for dogfooding (so this repo's own sessions get the same guardrails it
   ships), not as a second copy of the template source. The canonical source of each file lives

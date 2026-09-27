@@ -19,6 +19,7 @@
 # automatically; --with-workflow is only needed to add it for the first time.
 
 set -euo pipefail
+set -x
 
 MEMORY_BANK_REPO="${INIT_AGENT_MEMORY_BANK_REPO:-https://github.com/TranThanh96/claude_memory_bank.git}"
 TICKET_WORKFLOW_REPO="${INIT_AGENT_TICKET_WORKFLOW_REPO:-https://github.com/TranThanh96/claude_ticket_workflow.git}"

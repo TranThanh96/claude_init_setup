@@ -46,10 +46,13 @@ class OrchestratorTestCase(unittest.TestCase):
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     def run_orchestrator(self, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(
+        res = subprocess.run(
             ["bash", str(ORCHESTRATOR / "init_agent.sh"), *args, str(self.root)],
             env=self.env, capture_output=True, text=True,
         )
+        print("DEBUG STDOUT:\n" + res.stdout)
+        print("DEBUG STDERR:\n" + res.stderr)
+        return res
 
 
 class TestCoreOnly(OrchestratorTestCase):

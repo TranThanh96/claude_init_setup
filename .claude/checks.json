@@ -1,7 +1,0 @@
-{
-  "checks": [
-    { "glob": "**/*.sh", "command": "bash -n {file}" },
-    { "glob": "**/*.py", "command": "python3 -m py_compile {file}" },
-    { "glob": ".claude/memory/**", "command": "python3 scripts/memory-lint.py --quiet" }
-  ]
-}

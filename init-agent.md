@@ -23,6 +23,15 @@ installable on its own if you only want one layer. Never overwrite a file silent
      `routing.json`, and `scripts/tasks_status.py` — for projects that plan large features
      spec-first or delegate tickets across Claude/Codex/Antigravity.
    Wait for their answer before continuing.
+2b. If step 2 chose (or step 2 was skipped because the workflow tier already exists) the ticket
+    workflow tier, and there's no `<target>/.claude/routing.json` yet, ask one more question, in
+    one shot — don't split it into a yes/no round followed by a name round: "Besides a Claude
+    subagent, will you also run another coding CLI yourself (Codex, Antigravity, opencode,
+    Cursor's CLI, or similar) to implement some tickets? If so, which one(s)?" Wait for their
+    answer — a plain "Claude only" is valid and expected, not a thing to talk them out of; if they
+    say yes without naming one, ask which before moving on, since step 7 needs a name to write.
+    Remember the answer for step 7. If `routing.json` already exists, skip this ask entirely
+    (their existing `delegates` list already answers it, and it's theirs to edit from here on).
 3. Run `bash <tmpdir>/init_agent.sh <target>` with `INIT_AGENT_MEMORY_BANK_REPO`/
    `INIT_AGENT_TICKET_WORKFLOW_REPO` left at their defaults (the two GitHub repos); add
    `--upgrade` before `<target>` if the target already has `.claude/memory/` (it then refreshes
@@ -44,8 +53,16 @@ installable on its own if you only want one layer. Never overwrite a file silent
    proposal before writing.
 7. Propose a `.claude/checks.json` from `.claude/checks.example.json` using only linters/type
    checkers the project already uses. Don't introduce new tools. If the workflow tier was
-   installed, also mention `.claude/routing.example.json` → `.claude/routing.json` (fill in
-   codex/antigravity model names once those are actually used).
+   installed and `<target>/.claude/routing.json` doesn't exist yet, create it by copying
+   `.claude/routing.example.json` and setting its `delegates` field from step 2b's answer:
+   `["claude"]` for Claude-only, or `["claude", "<cli>"]` naming whichever CLI(s) they gave
+   otherwise. For each named CLI that isn't already one of the example file's blocks
+   (`antigravity`/`codex` already have one), add a matching block for it —
+   `{ "trivial": "", "small": "", "medium": "", "large": "" }` — so the schema stays consistent
+   even for a CLI the template didn't anticipate. Leave every named CLI's model names blank until
+   it's actually been used and say so — `delegates` itself can be edited by hand at any time
+   afterward to add or drop a CLI (adding a matching block too, if it's a new one), since
+   `to-tickets` reads it fresh before every dispatch and needs no reinstall for that.
 8. Run `python3 scripts/memory-lint.py` and fix all errors.
 9. Self-update: if `<tmpdir>/init-agent.md` differs from `~/.claude/commands/init-agent.md`,
    copy it over and say so (the new version applies from the next run). Do this before deleting

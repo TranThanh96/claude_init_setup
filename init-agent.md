@@ -30,8 +30,11 @@ installable on its own if you only want one layer. Never overwrite a file silent
     Cursor's CLI, or similar) to implement some tickets? If so, which one(s)?" Wait for their
     answer — a plain "Claude only" is valid and expected, not a thing to talk them out of; if they
     say yes without naming one, ask which before moving on, since step 7 needs a name to write.
-    Remember the answer for step 7. If `routing.json` already exists, skip this ask entirely
-    (their existing `delegates` list already answers it, and it's theirs to edit from here on).
+    Remember the answer for step 7, where each name gets lowercased and collapsed to a single
+    word (e.g. "Codex" or "Cursor's CLI" -> `cursor`) before it's compared or written — the
+    question's wording is free-text and isn't itself the key. If `routing.json` already exists,
+    skip this ask entirely (their existing `delegates` list already answers it, and it's theirs
+    to edit from here on).
 3. Run `bash <tmpdir>/init_agent.sh <target>` with `INIT_AGENT_MEMORY_BANK_REPO`/
    `INIT_AGENT_TICKET_WORKFLOW_REPO` left at their defaults (the two GitHub repos); add
    `--upgrade` before `<target>` if the target already has `.claude/memory/` (it then refreshes
@@ -56,8 +59,10 @@ installable on its own if you only want one layer. Never overwrite a file silent
    installed and `<target>/.claude/routing.json` doesn't exist yet, create it by copying
    `.claude/routing.example.json` and setting its `delegates` field from step 2b's answer:
    `["claude"]` for Claude-only, or `["claude", "<cli>"]` naming whichever CLI(s) they gave
-   otherwise. For each named CLI that isn't already one of the example file's blocks
-   (`antigravity`/`codex` already have one), add a matching block for it —
+   otherwise, each normalized per step 2b (lowercased, collapsed to a single word — "Codex"
+   and "codex" and "CODEX" are the same key) before comparing or writing. For each named CLI
+   whose normalized key isn't already one of the example file's blocks (`antigravity`/`codex`
+   already have one), add a matching block keyed by that normalized name —
    `{ "trivial": "", "small": "", "medium": "", "large": "" }` — so the schema stays consistent
    even for a CLI the template didn't anticipate. Leave every named CLI's model names blank until
    it's actually been used and say so — `delegates` itself can be edited by hand at any time

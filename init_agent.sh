@@ -35,6 +35,18 @@ while [[ "${1:-}" == --* ]]; do
 done
 TARGET_DIR="${1:-.}"
 
+# This repo carries no template payload of its own (see CLAUDE.md's git history for why:
+# self-installing the memory-bank/workflow tiers into its own .claude/ was tried and reverted).
+# init_agent.sh itself usually runs from a scratch clone (see init-agent.md step 3), so it can't
+# tell "am I self-targeting?" by comparing to its own path -- it has to look at TARGET_DIR
+# instead. Both of these files are this orchestrator's own source, present nowhere else.
+if [[ -f "$TARGET_DIR/init_agent.sh" && -f "$TARGET_DIR/init-agent.md" ]]; then
+  echo "error: $TARGET_DIR looks like claude_init_setup itself (has init_agent.sh and" >&2
+  echo "init-agent.md) -- refusing to install the memory bank/workflow tiers into this repo." >&2
+  echo "Target a different project, or pass a specific target_dir." >&2
+  exit 1
+fi
+
 if [[ -f "$TARGET_DIR/.claude/rules/workflow.md" ]]; then
   WORKFLOW=1
 fi

@@ -102,5 +102,47 @@ class TestWorkflowTierIsSticky(OrchestratorTestCase):
         self.assertIn("claude_ticket_workflow", res.stdout)
 
 
+class TestSelfTargetGuard(unittest.TestCase):
+    """No sibling checkouts needed -- the guard must fire before either repo is resolved."""
+
+    def setUp(self) -> None:
+        self._tmp = Path(tempfile.mkdtemp(prefix="cis-test-"))
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def test_refuses_a_target_that_looks_like_this_repo(self):
+        target = self._tmp / "looks-like-orchestrator"
+        target.mkdir()
+        (target / "init_agent.sh").write_text("#!/usr/bin/env bash\n")
+        (target / "init-agent.md").write_text("---\n---\n")
+        res = subprocess.run(
+            ["bash", str(ORCHESTRATOR / "init_agent.sh"), str(target)],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("looks like claude_init_setup itself", res.stderr)
+        self.assertFalse((target / "CLAUDE.md").exists())
+
+    def test_ordinary_target_is_unaffected(self):
+        # Point both repo env vars at an empty local dir so this stays network-free -- the
+        # guard runs before either repo is resolved, so it doesn't matter that install.sh
+        # itself will then fail against an empty "repo".
+        empty_repo = self._tmp / "empty-repo"
+        empty_repo.mkdir()
+        target = self._tmp / "ordinary-project"
+        target.mkdir()
+        env = {
+            **os.environ,
+            "INIT_AGENT_MEMORY_BANK_REPO": str(empty_repo),
+            "INIT_AGENT_TICKET_WORKFLOW_REPO": str(empty_repo),
+        }
+        res = subprocess.run(
+            ["bash", str(ORCHESTRATOR / "init_agent.sh"), str(target)],
+            env=env, capture_output=True, text=True,
+        )
+        self.assertNotIn("looks like claude_init_setup itself", res.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -57,6 +57,14 @@ installable on its own if you only want one layer. Never overwrite a file silent
    the project's actual source, build files, and CI config, and propose real content. Gotchas must
    come from evidence in the repo (comments, CI steps, configs), not generic advice. Present the
    proposal before writing.
+
+   The `## Project docs` table is handled separately, since reading every doc file can burn a lot
+   of tokens. If `<target>/docs/` doesn't exist yet, leave the section as a placeholder for
+   whenever docs show up later — don't delete it. If it exists, don't read the files yet: list
+   them and guess each one's "Read when / Purpose" from its filename alone (e.g. `architecture.md`
+   -> "Before changing module boundaries"). Show me the guesses and ask which are right and which
+   I want you to open to verify. Only read a file after I say so; for any guess I neither confirm
+   nor authorize reading, leave its row's placeholder and note that file as not yet reviewed.
 8. Propose a `.claude/checks.json` from `.claude/checks.example.json` using only linters/type
    checkers the project already uses. Don't introduce new tools. If the workflow tier was
    installed and `<target>/.claude/routing.json` doesn't exist yet, create it by copying

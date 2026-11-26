@@ -9,7 +9,7 @@ whichever of the two repos below you need and delegates to their own `install.sh
 | Repo | What it gives you | Standalone install |
 | --- | --- | --- |
 | [claude_memory_bank](https://github.com/TranThanh96/claude_memory_bank) | The agent remembers what it was doing, past decisions, patterns, and known issues — across sessions, compaction, and restarts. | `git clone` it and run its `install.sh` directly — no dependency on this repo. |
-| [claude_ticket_workflow](https://github.com/TranThanh96/claude_ticket_workflow) | Spec-first planning for large features, and tickets you can delegate across Claude, Codex, and Antigravity. Assumes the memory bank above is already installed. | Same — `git clone` + `install.sh`, once the memory bank is in place. |
+| [claude_ticket_workflow](https://github.com/TranThanh96/claude_ticket_workflow) | Spec-first planning for large features, and tickets the main agent dispatches to Claude subagents. Assumes the memory bank above is already installed. | Same — `git clone` + `install.sh`, once the memory bank is in place. |
 
 Each of those repos is public and guest-installable on its own. Use this repo when you want both
 picked and wired up for you in one guided pass, with a merge/upgrade/migration flow handled by
@@ -55,7 +55,7 @@ All of that lives in the two source repos, since that's where the actual mechani
 - [claude_memory_bank's README](https://github.com/TranThanh96/claude_memory_bank#readme) —
   the everyday memory-bank workflow, what goes where, mechanics reference, troubleshooting.
 - [claude_ticket_workflow's README](https://github.com/TranThanh96/claude_ticket_workflow#readme) —
-  the skills, delegation across Claude/Codex/Antigravity, ticket status.
+  the skills, dispatching tickets to Claude subagents, ticket status.
 
 ## 4. Keep it up to date
 

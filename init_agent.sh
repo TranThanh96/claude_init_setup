@@ -104,6 +104,6 @@ if [[ $WORKFLOW -eq 1 ]]; then
   install_layer "$TICKET_WORKFLOW_DIR"
 else
   echo
-  echo "Ticket workflow (grilling/to-spec/to-tickets/implementation/tdd/debugging/ticket-review,"
-  echo "AGENTS.md, routing.json) not installed. Re-run with --with-workflow to add it later."
+  echo "Ticket workflow (grill-with-docs/to-spec/to-tickets/run-tickets/tdd/spec-review/...,"
+  echo "AGENTS.md, routing.example.json) not installed. Re-run with --with-workflow to add it later."
 fi
